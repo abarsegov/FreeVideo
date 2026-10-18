@@ -1,0 +1,10 @@
+{
+  "image": {
+    "class_type": "EmptyImage",
+    "inputs": {"width": 512, "height": 512, "batch_size": 24, "color": 0}
+  },
+  "video": {
+    "class_type": "CreateVideo",
+    "inputs": {"images": ["image", 0], "fps": 24}
+  }
+}

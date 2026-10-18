@@ -25,13 +25,15 @@ def clean_prompt(json_data):
     prompt = json_data.get('prompt') if isinstance(json_data, dict) else None
     for node in prompt.values() if isinstance(prompt, dict) else ():
         inputs = node.get('inputs') if isinstance(node, dict) and node.get('class_type') == 'FreeVideoGenerate' else None
-        if isinstance(inputs, dict) and 'frames' in inputs and not isinstance(inputs['frames'], list):
+        if (isinstance(inputs, dict) and inputs.get('backend', 'vdn') != 'workflow'
+                and 'frames' in inputs and not isinstance(inputs['frames'], list)):
             frames = node_frames(inputs['frames'])
             if frames != inputs['frames'] or type(frames) is not type(inputs['frames']):
                 logging.info('[FreeVideo] Total frames %r is not a frame count; the length follows Duration.',
                              str(inputs['frames'])[:40])
                 inputs['frames'] = frames
-    return json_data
+    from .comfy_workflows import registry
+    return registry().expand(json_data)
 
 
 def register_prompt_cleanup():
@@ -124,6 +126,13 @@ class FreeVideoGenerate(io.ComfyNode):
                 io.Combo.Input('upscale_factor', display_name='Upscale factor', options=list(UPSCALE_OPTIONS), default='2',
                     optional=True, advanced=True,
                     tooltip='Two-pass only: a smaller factor starts from a larger first pass, for more detail and a longer run.'),
+                io.Combo.Input('backend', options=['vdn', 'workflow'], default='vdn', optional=True, advanced=True,
+                    tooltip='Use FreeVideo / VDN or a workflow installed by the ComfyUI administrator.'),
+                io.String.Input('workflow_id', default='', optional=True, advanced=True,
+                    tooltip='Installed workflow selected by the FreeVideo page.'),
+                io.Video.Input('workflow_result', optional=True, advanced=True, lazy=True, extra_dict={'hidden': True}),
+                io.String.Input('workflow_run_id', default='', optional=True, advanced=True,
+                    extra_dict={'hidden': True}),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -133,11 +142,20 @@ class FreeVideoGenerate(io.ComfyNode):
     @classmethod
     def validate_inputs(cls, text, width, height, seconds, seed, continue_from='', frames=0, two_pass=True,
                         preview=False, refine_from='', base_steps=8, refine_steps=3, step_cache='none',
-                        upscale_factor='2'):
+                        upscale_factor='2', backend='vdn', workflow_id=''):
         # ComfyUI marks every input named here when a check fails, so only the checked widgets are
         # listed. Linked pictures, media and conditioning have no value before the run anyway.
         # step_cache and upscale_factor are named so ComfyUI skips their option lists: an older saved
         # workflow puts '' there, and execute uses no cache and the 2x upscale for a value that is not an option.
+        if backend == 'workflow':
+            from .comfy_workflows import registry
+            try:
+                registry().validate(workflow_id)
+            except (OSError, ValueError) as error:
+                return str(error)
+            return True
+        if backend != 'vdn':
+            return 'Unknown FreeVideo backend: ' + str(backend)
         refine_from = optional_text(refine_from)
         try:
             options = request_options(continue_from, node_frames(frames))
@@ -170,11 +188,30 @@ class FreeVideoGenerate(io.ComfyNode):
         return float('nan')
 
     @classmethod
+    def check_lazy_status(cls, backend='vdn', workflow_result=None, **kwargs):
+        # Release FreeVideo's external worker before Comfy evaluates the linked
+        # workflow. Doing this in execute would be too late: its models would
+        # already have loaded to produce workflow_result.
+        if backend == 'workflow' and workflow_result is None:
+            from .comfy_workflows import prepare
+            prepare()
+            return ['workflow_result']
+        return []
+
+    @classmethod
     def execute(cls, text, width, height, seconds, seed, first=None, last=None,
                 references=None, loras=None, conditioning=None, media=None, two_pass=True,
                 force_regenerate=False, base_steps=8, refine_steps=3, preview=False, refine_from='',
                 continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False,
-                step_cache='none', upscale_factor='2'):
+                step_cache='none', upscale_factor='2', backend='vdn', workflow_id='', workflow_result=None,
+                workflow_run_id='', **kwargs):
+        if backend == 'workflow':
+            from .comfy_workflows import finalize
+            return finalize(workflow_result, workflow_id=workflow_id, workflow_run_id=workflow_run_id,
+                            text=text, width=width, height=height, seconds=seconds, seed=seed,
+                            frames=frames, hidden=cls.hidden)
+        if backend != 'vdn':
+            raise ValueError('Unknown FreeVideo backend: ' + str(backend))
         from server import PromptServer
         from .comfy_chain import block_context, block_finished, report_fields
         refine_from, continue_from = optional_text(refine_from), optional_text(continue_from)

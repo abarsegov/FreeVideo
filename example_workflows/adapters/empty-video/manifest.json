@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "empty-video",
+  "title": "Synthetic blank video (adapter smoke test)",
+  "inputs": {
+    "width": {"node": "image", "input": "width", "required": true},
+    "height": {"node": "image", "input": "height", "required": true},
+    "frames": {"node": "image", "input": "batch_size", "required": true},
+    "fps": {"node": "video", "input": "fps", "required": true},
+    "first_frame": {"node": "video", "input": "images"}
+  },
+  "outputs": {"video": {"node": "video", "output": 0}}
+}

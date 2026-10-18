@@ -4,6 +4,7 @@ import {createExpandButton} from './editor_expand.js';
 import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
+import {createWorkflowBackendPicker} from './workflow_backend.js';
 import { openSetup } from './setup.js';
 import { feedbackButton, feedbackIssueURL } from './feedback.js';
 import { wordmark } from './wordmark.js';
@@ -1387,6 +1388,14 @@ export function openStudio(node, {extendFrom = null} = {}) {
     generate.dataset.fvGuide = 'generate';
     runrow.append(generate, runOptions);
     runButtonReady = true;
+    const backendPicker = createWorkflowBackendPicker({api, read: name => value(node, name),
+        write: (name, next) => set(node, name, next), t,
+        onChange: custom => {
+            samplingSettings.hidden = custom;
+            samplingFields.hidden = custom; samplingWarning.hidden = custom;
+            if (custom && previewFirst.checked) { previewFirst.checked = false; set(node, 'preview', false); }
+        }});
+    controls.prepend(backendPicker.element); cleanup.push(() => backendPicker.dispose());
     const queueActions = el('div', null, 'fv-queue-actions');
     const queueDetails = el('details', null, 'fv-queue-details');
     const queueToggle = el('summary'), queueList = el('div', null, 'fv-queue-list');
@@ -1602,6 +1611,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
             if (selected === 'input' && !dimensionsLinked) await inputRatio(true);
             const lengthPlan = await lengthControl.ready();
             if (disposed || lengthControl.blocked) return;
+            if (backendPicker.custom()) {
+                await backendPicker.ready;
+                const problem = backendPicker.error({parts: lengthPlan?.count || 1,
+                    continuing: Boolean(extension.source), preview: previewFirst.checked});
+                if (problem) throw new Error(problem);
+            }
             if (lengthControl.absent && !seconds.reportValidity()) return;
             if (lengthPlan?.count > 1 && chosenMode !== 'single') { status.textContent = t('Videos made in parts cannot use batch or loop.', '分段视频不能批量或循环生成。'); return; }
             const lengthOptions = lengthControl.options();

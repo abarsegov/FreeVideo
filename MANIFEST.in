@@ -22,6 +22,7 @@ include scripts/prune_qt_bundle.py scripts/deduplicate_bundle_data.py scripts/py
 include scripts/verify_dmg_conversion.py
 prune docs
 include docs/LoRA.md docs/LoRA.zh-CN.md
+include docs/workflow-adapter.md
 prune tests
 prune benchmarks
 prune distribution
