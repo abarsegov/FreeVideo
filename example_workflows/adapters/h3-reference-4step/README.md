@@ -31,4 +31,4 @@ Production did not provide `SelfLiftH3Sampler`, `DasiwaMinimaxH3_dasiwaREF2VAHyb
 
 The adapter registry and expansion pass locally. A three-picture external IMAGE link remains in the caller namespace and fans out to all nine helper outputs. All installed node classes, links, required inputs, enum selections, numeric bounds and selected model names passed a static check against the production node schemas. Optional null AUDIO handling was checked against the installed `execution.py` validator and H3 `execute` implementation. The added FreeVideo helper must be present in the installed FreeVideo version.
 
-No `/prompt` request or GPU generation was submitted. Generation quality, peak memory, and runtime compatibility of this new four-step recipe have not been measured.
+A production smoke test on HellEva completed on 2026-10-18: one uploaded picture reference, 256×256, 39 frames, four sampling steps, and the default LoRA produced a saved VIDEO with audio. The report preserved effective profile settings. This checks execution and saving; visual quality, peak memory and performance at normal production resolutions have not been assessed.

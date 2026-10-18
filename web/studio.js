@@ -1400,6 +1400,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const backendPicker = createWorkflowBackendPicker({api, read: name => value(node, name),
         write: (name, next) => set(node, name, next), t,
         onChange: (customMode, selectedWorkflow) => {
+            dialog.classList.toggle('fv-workflow-mode', customMode);
             samplingSettings.hidden = customMode;
             for (const [child, hidden] of nativeAdvanced) child.hidden = customMode && child !== seedFields && child !== custom ? true : hidden;
             workflowProfile.advanced.hidden = !customMode;
