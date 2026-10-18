@@ -59,6 +59,34 @@ class WorkflowTests(unittest.TestCase):
                                           workflow_run_id='nonce', text='prompt', width=640,
                                           height=480, seconds=3., seed=42, **kwargs)
 
+    def test_save_report_uses_full_execution_measurement_after_saving(self):
+        now = [10.]
+        timing = Mock(side_effect=lambda: dict(request_seconds=now[0], sample_seconds=4.,
+                                               cached_nodes=2, timing_scope='execution'))
+        class TimedVideo(Video):
+            def save_to(self, *args, **kwargs):
+                super().save_to(*args, **kwargs)
+                now[0] += 7.
+        with tempfile.TemporaryDirectory() as root, patch.object(comfy_workflows, '_probe',
+                return_value=({'width': 320}, {'present': False})):
+            output, serialized, report = self.save(TimedVideo(), root, timing_source=timing)
+            self.assertEqual(report['request_seconds'], 17.)
+            self.assertEqual(report['video']['sample_seconds'], 4.)
+            self.assertEqual(report['workflow']['cached_nodes'], 2)
+            self.assertEqual(report['workflow']['timing_scope'], 'execution')
+            self.assertEqual(json.loads(output.with_suffix('.request.json').read_text())['request_seconds'], 17.)
+            self.assertEqual(json.loads(serialized)['request_seconds'], 17.)
+        timing.assert_called_once_with()
+
+    def test_save_report_does_not_claim_execution_timing_without_observer(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(comfy_workflows, '_probe',
+                return_value=({'width': 320}, {'present': False})):
+            _, _, report = self.save(Video(), root, timing_source=lambda: None)
+            self.assertEqual(report['workflow']['timing_scope'], 'save')
+            self.assertIsNone(report['request_seconds'])
+            self.assertGreaterEqual(report['workflow']['save_seconds'], 0.)
+            self.assertNotIn('sample_seconds', report['video'])
+
     def test_save_preserves_video_api_and_writes_library_report(self):
         video = Video()
         actual = dict(width=320, height=240, frames=48, fps=24., seconds=2.)

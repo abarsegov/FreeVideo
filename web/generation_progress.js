@@ -1,5 +1,6 @@
 // One whole-video estimate and the same five rows in Studio and the node view.
 import { saveReport, reportIssue, showReportTip } from './report_issue.js';
+import {workflowProgressView} from './workflow_progress_view.js';
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./generation_progress.css', import.meta.url).href;
 document.head.append(css);
@@ -46,6 +47,8 @@ const SUBACTIVITY_LABELS = {
     'Saving decoded video': 'save', 'Saving decoded audio': 'save',
 };
 function subactivity(message, activity, t) {
+    const workflow = workflowProgressView(message, t);
+    if (workflow) return {key: `workflow:${workflow.key}`, text: workflow.text, sampling: message.phase === 'sampling'};
     const phase = message.phase || message.timing_phase || message.stage;
     const label = message.label;
     let key = SUBACTIVITY_LABELS[label];
@@ -151,6 +154,8 @@ const ranOnePass = plan => plan.requested === true && plan.enabled === false && 
 // The fixed stage key (for the small bar and replays) and its sentence. Each
 // number appears once: sampling says the step, a download says its size and speed.
 function activityLabel(message, t, plan = {}, secondPass = false, references = false) {
+    const workflow = workflowProgressView(message, t);
+    if (workflow) return {key: workflow.key, text: workflow.text};
     const phase = message.phase || message.timing_phase || message.stage;
     const named = key => ({key, text: t(...ACTIVITY[key])});
     if (phase === 'dependencies' && message.stage === 'probe') return named('prepare');
@@ -540,6 +545,25 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         && value.done >= 0 && value.done <= value.total;
 
     function drawOverall() {
+        const workflow = workflowProgressView(state, t);
+        element.dataset.workflow = String(Boolean(workflow));
+        if (workflow) {
+            stopCount(); countShown = null;
+            heading.hidden = !workflow.counted; count.textContent = workflow.count;
+            const complete = overall.status === 'complete';
+            element.dataset.counted = String(workflow.counted); element.dataset.complete = String(complete);
+            track.setAttribute('aria-label', t('Workflow node completion', '工作流节点完成进度'));
+            track.setAttribute('aria-valuetext', workflow.count || workflow.text);
+            if (workflow.counted) {
+                shownFraction = Math.max(shownFraction ?? 0, workflow.fraction);
+                fill.style.width = `${100 * shownFraction}%`;
+                element.style.setProperty('--fv-progress', `${100 * shownFraction}%`);
+                track.setAttribute('aria-valuemax', String(workflow.total)); track.setAttribute('aria-valuenow', String(workflow.done));
+            } else {
+                fill.style.width = ''; track.removeAttribute('aria-valuemax'); track.removeAttribute('aria-valuenow');
+            }
+            return;
+        }
         // Stage counters cannot substitute for a whole-video estimate.
         if (!Object.keys(overall).length) {
             stopCount(); countShown = null;
@@ -897,6 +921,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             const firstAt = valid(message.received_at) ? message.received_at : now();
             elapsedLead = sameClick ? Math.max(0, (firstAt - started) / 1000
                 - (valid(message.overall?.elapsed_seconds) ? message.overall.elapsed_seconds : 0)) : 0;
+            if (message.workflow) { elapsedLead = 0; elapsedShown = 0; }
             if (!sameClick) { started = now(); elapsedShown = 0; }
             placeholder = message.stream_id === undefined && !terminal;
             state = {}; overall = {}; overallAt = now(); shownFraction = null; estimateSource = null;

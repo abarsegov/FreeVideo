@@ -1,5 +1,36 @@
 # Registered workflow adapters
 
+## Workflow progress and timing
+
+Registered workflows publish progress for their original `FreeVideoGenerate`
+node while the native ComfyUI graph executes. The main bar counts reachable
+workflow nodes, including cache hits; it is not a prediction of elapsed or
+remaining time. The sampler has a separate measured step counter. Model loading
+and other nodes without counters remain uncounted within their current node.
+Completion is published only after the final VIDEO is saved successfully.
+
+Authors can give graph nodes explicit presentation metadata:
+
+```json
+"_meta": {
+  "freevideo_progress": {"stage": "sampling", "label": "H3 sampling"}
+}
+```
+
+Stages are `prepare`, `model_load`, `text_encode`, `reference`, `sampling`,
+`video_decode`, `audio_decode`, and `saving`. Other nodes use a class-based
+fallback. Use short labels without file paths or prompt text. The shipped H3
+profile includes these labels. Metadata does not change execution.
+
+Reports with `workflow.timing_scope="execution"` measure `request_seconds` from
+ComfyUI execution start through media saving and report preparation. Queue wait
+is excluded. `video.sample_seconds` measures time spent in sampling nodes; it is
+not a sampler-only GPU kernel benchmark. Cache hits do not fabricate sampling
+time. A fallback report with scope `save` cannot claim full execution timing.
+
+Failed and cancelled runs stop their elapsed timer and keep partial progress.
+Active snapshots can restore the last status after a browser refresh.
+
 The workflow backend runs an administrator-installed ComfyUI API prompt behind
 the existing `FreeVideoGenerate` node. The original node ID, VIDEO output and
 library ownership remain intact. The server expands the registered graph before

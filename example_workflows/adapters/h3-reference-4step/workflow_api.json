@@ -4,6 +4,12 @@
     "inputs": {
       "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
       "weight_dtype": "default"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "model_load",
+        "label": "Load H3 video model"
+      }
     }
   },
   "attention": {
@@ -14,6 +20,12 @@
         0
       ],
       "attention": "comfy kitchen attention"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Configure attention"
+      }
     }
   },
   "turbo": {
@@ -25,6 +37,12 @@
       ],
       "lora_name": "H3\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "strength_model": 1.0
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "model_load",
+        "label": "Apply turbo LoRA"
+      }
     }
   },
   "text_encoder": {
@@ -33,24 +51,48 @@
       "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "type": "minimax",
       "device": "default"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "model_load",
+        "label": "Load text encoder"
+      }
     }
   },
   "video_vae": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "model_load",
+        "label": "Load video VAE"
+      }
     }
   },
   "audio_vae": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "model_load",
+        "label": "Load audio VAE"
+      }
     }
   },
   "references": {
     "class_type": "FreeVideoH3ReferenceImages",
     "inputs": {
       "images": null
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "reference",
+        "label": "Prepare reference images"
+      }
     }
   },
   "frame_count": {
@@ -58,6 +100,12 @@
     "inputs": {
       "expression": "max(5, a) + (5 - (max(5, a) % 17)) % 17",
       "values.a": 124
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Calculate frame count"
+      }
     }
   },
   "h3": {
@@ -120,6 +168,12 @@
         "references",
         8
       ]
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "text_encode",
+        "label": "Encode prompt and references"
+      }
     }
   },
   "negative": {
@@ -129,12 +183,24 @@
         "h3",
         0
       ]
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Prepare negative conditioning"
+      }
     }
   },
   "noise": {
     "class_type": "RandomNoise",
     "inputs": {
       "noise_seed": 42
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Prepare seed"
+      }
     }
   },
   "guider": {
@@ -153,6 +219,12 @@
         0
       ],
       "cfg": 1.0
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Configure guidance"
+      }
     }
   },
   "scheduler": {
@@ -165,12 +237,24 @@
       "scheduler": "beta",
       "steps": 4,
       "denoise": 1.0
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Prepare noise schedule"
+      }
     }
   },
   "sampler": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "prepare",
+        "label": "Configure sampler"
+      }
     }
   },
   "sample": {
@@ -196,6 +280,12 @@
         "h3",
         1
       ]
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "sampling",
+        "label": "H3 sampling"
+      }
     }
   },
   "decode_video": {
@@ -209,6 +299,12 @@
         "video_vae",
         0
       ]
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "video_decode",
+        "label": "Decode video frames"
+      }
     }
   },
   "decode_audio": {
@@ -222,6 +318,12 @@
         "audio_vae",
         0
       ]
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "audio_decode",
+        "label": "Decode audio"
+      }
     }
   },
   "video": {
@@ -239,6 +341,12 @@
       "bit_depth": 8,
       "color_space": "sRGB",
       "codec": "none"
+    },
+    "_meta": {
+      "freevideo_progress": {
+        "stage": "saving",
+        "label": "Assemble video and audio"
+      }
     }
   }
 }

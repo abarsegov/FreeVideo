@@ -27,7 +27,11 @@ def register():
     from aiohttp import web
     from server import PromptServer
     server = PromptServer.instance
-    if server is None or getattr(server, '_freevideo_workflows', False):
+    if server is None:
+        return
+    from .workflow_progress import register as register_progress
+    register_progress(server)
+    if getattr(server, '_freevideo_workflows', False):
         return
 
     @server.routes.get('/freevideo/workflows')
@@ -109,7 +113,8 @@ def _embed_metadata(hidden):
 
 
 def save_result(video, *, output_directory, workflow_id, workflow_run_id='', text,
-                width, height, seconds, seed, frames=0, metadata=None, workflow=None, workflow_settings=None):
+                width, height, seconds, seed, frames=0, metadata=None, workflow=None, workflow_settings=None,
+                timing_source=None):
     """Save the Comfy VIDEO API object, then commit its library-compatible report.
 
     A VIDEO can carry trims/crops and audio, so its save_to API is authoritative.
@@ -127,20 +132,31 @@ def save_result(video, *, output_directory, workflow_id, workflow_run_id='', tex
         if not output.is_file() or output.stat().st_size == 0:
             raise ValueError('The selected workflow did not save a video')
         geometry, audio = _probe(output)
+        if metadata is not None:
+            (folder / 'workflow.json').write_text(json.dumps(metadata, ensure_ascii=False), encoding='utf-8')
+        (folder / 'prompt.txt').write_text(text, encoding='utf-8')
+        timing = timing_source() if timing_source is not None else None
+        save_seconds = time.monotonic() - started
+        # Without execution_start, only the save is measured. Do not present
+        # that smaller interval as the request's total runtime.
+        timing = timing or dict(request_seconds=None, timing_scope='save')
         report = dict(success=True, backend='workflow', workflow=dict(id=workflow_id, run_id=workflow_run_id),
                       prompt=text, seed=seed, parameters=dict(width=width, height=height, seconds=seconds,
                                                              frames=frames, seed=seed),
-                      geometry=geometry, audio=audio, request_seconds=time.monotonic() - started,
+                      geometry=geometry, audio=audio, request_seconds=timing['request_seconds'],
                       video={}, encoding={})
+        report['workflow']['timing_scope'] = timing['timing_scope']
+        report['workflow']['save_seconds'] = save_seconds
+        if 'sample_seconds' in timing:
+            report['video']['sample_seconds'] = timing['sample_seconds']
+        if 'cached_nodes' in timing:
+            report['workflow']['cached_nodes'] = timing['cached_nodes']
         if workflow:
             report['workflow'].update(title=workflow.get('title'), capabilities=workflow.get('capabilities', {}))
         if workflow_settings is not None:
             report['workflow']['settings'] = workflow_settings
         serialized = json.dumps(report, ensure_ascii=False, indent=2)
         output.with_suffix('.request.json').write_text(serialized + '\n', encoding='utf-8')
-        if metadata is not None:
-            (folder / 'workflow.json').write_text(json.dumps(metadata, ensure_ascii=False), encoding='utf-8')
-        (folder / 'prompt.txt').write_text(text, encoding='utf-8')
         return output, serialized, report
     except BaseException:
         # This directory was created exclusively for this request. Partial saves
@@ -155,18 +171,23 @@ def finalize(video, *, workflow_id, workflow_run_id='', text, width, height, sec
     from server import PromptServer
     from .comfy_assets import output_summary, saved_video
     from .comfy_progress import publish
+    from .workflow_progress import get as get_progress
     node_id = hidden.unique_id
     server = PromptServer.instance
+    progress = get_progress(server)
     try:
         if video is None:
             raise ValueError('Workflow result is missing. Select an installed workflow and queue the FreeVideo prompt again.')
         workflow = registry().validate(workflow_id)
+        if progress is not None:
+            progress.begin_save(workflow_run_id)
         root = Path(folder_paths.get_output_directory()).resolve()
         output, serialized, report = save_result(
             video, output_directory=root, workflow_id=workflow_id, workflow_run_id=workflow_run_id,
             text=text, width=width, height=height, seconds=seconds, seed=seed, frames=frames,
             metadata=_embed_metadata(hidden), workflow=workflow,
-            workflow_settings=json.loads(workflow_settings or '{}').get(workflow_id, {}))
+            workflow_settings=json.loads(workflow_settings or '{}').get(workflow_id, {}),
+            timing_source=(lambda: progress.timing(workflow_run_id)) if progress is not None else None)
         preview = ui.PreviewVideo([saved_video(output, root)]).as_dict()
         summary = output_summary(report, output.relative_to(root))
         summary.update(backend='workflow', workflow_id=workflow_id, result_cache_hit=False)
@@ -174,9 +195,13 @@ def finalize(video, *, workflow_id, workflow_run_id='', text, width, height, sec
     except BaseException as error:
         cancelled = isinstance(error, KeyboardInterrupt) or type(error).__name__ in ('InterruptProcessingException', 'CancelledError')
         phase = 'cancelled' if cancelled else 'failed'
-        publish(server, node_id, dict(label='Generation cancelled' if cancelled else 'Generation stopped',
-                                     phase=phase, overall=dict(status=phase)))
+        handled = progress.finish(workflow_run_id, phase, publish=True) if progress is not None else False
+        if not handled:
+            publish(server, node_id, dict(label='Generation cancelled' if cancelled else 'Generation stopped',
+                                         phase=phase, overall=dict(status=phase)))
         raise
-    publish(server, node_id, dict(label='Video saved', phase='complete',
-                                 overall=dict(status='complete', fraction=1.), result=summary))
+    handled = progress.finish(workflow_run_id, publish=True, result=summary) if progress is not None else False
+    if not handled:
+        publish(server, node_id, dict(label='Video saved', phase='complete',
+                                     overall=dict(status='complete', fraction=1.), result=summary))
     return io.NodeOutput(InputImpl.VideoFromFile(str(output)), serialized, ui=preview)

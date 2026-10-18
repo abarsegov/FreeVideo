@@ -73,7 +73,7 @@ class ProgressState:
                 'estimated_step_seconds', 'remaining_seconds', 'display_fraction',
                 'estimated', 'uniform_remaining_steps', 'overall', 'retry', 'warning', 'kernel_cache_note',
                 'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain',
-                'frame_preview')
+                'frame_preview', 'workflow')
         value = deepcopy({key: message[key] for key in keys if key in message})
         if isinstance(message.get('prediction'), dict):
             # The UI only needs a history marker, not the resource forecast.
