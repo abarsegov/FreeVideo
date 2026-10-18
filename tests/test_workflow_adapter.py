@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from freevideo_engine.workflow_adapter import Registry, WorkflowAdapterError
+from freevideo_engine.workflow_adapter import Registry, WorkflowAdapterError, load_workflow_document
 
 
 class WorkflowAdapterTests(unittest.TestCase):
@@ -36,6 +36,107 @@ class WorkflowAdapterTests(unittest.TestCase):
     def write(self):
         (self.directory / 'manifest.json').write_text(json.dumps(self.manifest), encoding='utf-8')
         (self.directory / 'workflow_api.json').write_text(json.dumps(self.graph), encoding='utf-8')
+
+    def write_document(self, document=None):
+        self.editor_directory = self.root / '.editor'
+        self.editor_directory.mkdir(exist_ok=True)
+        self.registry = Registry(self.root, editor_directory=self.editor_directory)
+        document = document if document is not None else {
+            'version': 0.4, 'nodes': [
+                {'id': node_id, 'type': node['class_type'], 'widgets_values': []}
+                for node_id, node in self.graph.items()], 'links': [],
+            'extra': {'freevideo': {'version': 1, 'manifest': deepcopy(self.manifest), 'api': deepcopy(self.graph)}},
+        }
+        (self.editor_directory / 'test-video.json').write_text(json.dumps(document), encoding='utf-8')
+        return document
+
+    def test_native_document_compiles_and_overrides_legacy(self):
+        document = self.write_document()
+        document['extra']['freevideo']['manifest']['title'] = 'Native document'
+        document['extra']['freevideo']['api']['image']['inputs']['color'] = 1234
+        self.write_document(document)
+        catalog = self.registry.catalog()
+        self.assertEqual([item['title'] for item in catalog], ['Native document'])
+        result, _, video = self.expanded_parts(self.payload())
+        self.assertEqual(result['prompt'][video['inputs']['images'][0]]['inputs']['color'], 1234)
+        self.assertNotIn('api', catalog[0])
+        self.assertNotIn('manifest', catalog[0])
+
+    def test_native_document_without_legacy_root_and_foreign_documents(self):
+        self.write_document()
+        self.registry = Registry(self.root / 'missing', editor_directory=self.editor_directory)
+        (self.editor_directory / 'foreign.json').write_text(json.dumps({'version': 0.4, 'nodes': [], 'links': []}))
+        self.assertEqual([item['id'] for item in self.registry.catalog()], ['test-video'])
+        self.assertEqual(self.registry.validate('test-video')['id'], 'test-video')
+
+    def test_invalid_native_document_never_falls_back_to_legacy(self):
+        document = self.write_document()
+        for invalid in [dict(document, links={}), dict(document, version=9),
+                        dict(document, extra={}), dict(document, nodes=[]),
+                        dict(document, extra={'freevideo': {'version': 2}})]:
+            self.write_document(invalid)
+            with self.subTest(document=invalid), self.assertRaises(WorkflowAdapterError):
+                self.registry.validate('test-video')
+        (self.editor_directory / 'test-video.json').write_text('{broken')
+        with self.assertRaisesRegex(WorkflowAdapterError, 'test-video'):
+            self.registry.catalog()
+
+    def test_document_manifest_must_match_filename(self):
+        document = self.write_document()
+        document['extra']['freevideo']['manifest']['id'] = 'different'
+        self.write_document(document)
+        with self.assertRaisesRegex(WorkflowAdapterError, 'Manifest id'):
+            self.registry.validate('test-video')
+        with self.assertRaises(WorkflowAdapterError):
+            self.registry.catalog()
+
+    def test_document_helper_checks_api_visual_node_identity(self):
+        document = self.write_document()
+        manifest, graph = load_workflow_document(document)
+        self.assertEqual(manifest, self.manifest)
+        self.assertEqual(graph, self.graph)
+        document['nodes'].append({'id': 'note', 'type': 'Note'})
+        load_workflow_document(document)  # Editor-only nodes need no executable API node.
+        document['nodes'][0]['type'] = 'WrongClass'
+        with self.assertRaisesRegex(WorkflowAdapterError, 'visual node ID and type'):
+            load_workflow_document(document)
+
+    def test_document_accepts_numeric_visual_ids_and_rejects_duplicates(self):
+        document = self.write_document()
+        envelope = document['extra']['freevideo']
+        envelope['api'] = {'1': envelope['api'].pop('image'), '2': envelope['api'].pop('video')}
+        envelope['api']['2']['inputs']['images'] = ['1', 0]
+        for binding in envelope['manifest']['inputs'].values():
+            binding['node'] = '1' if binding['node'] == 'image' else '2'
+        envelope['manifest']['outputs']['video']['node'] = '2'
+        document['nodes'] = [{'id': 1, 'type': 'EmptyImage'}, {'id': 2, 'type': 'CreateVideo'}]
+        load_workflow_document(document)
+        document['nodes'].append({'id': '1', 'type': 'EmptyImage'})
+        with self.assertRaisesRegex(WorkflowAdapterError, 'unique IDs'):
+            load_workflow_document(document)
+
+    def test_native_document_size_limit_and_path_validation(self):
+        self.write_document()
+        path = self.editor_directory / 'test-video.json'
+        path.write_bytes(b' ' * (8 * 1024 * 1024 + 1))
+        with self.assertRaisesRegex(WorkflowAdapterError, '8 MiB'):
+            self.registry.validate('test-video')
+        for workflow_id in ('../test-video', 'test-video.json', '/test-video'):
+            with self.subTest(workflow_id=workflow_id), self.assertRaises(WorkflowAdapterError):
+                self.registry.validate(workflow_id)
+
+    def test_native_document_symlink_cannot_escape_directory(self):
+        self.write_document()
+        external = self.root / 'external.json'
+        path = self.editor_directory / 'test-video.json'
+        external.write_bytes(path.read_bytes())
+        path.unlink()
+        try:
+            path.symlink_to(external)
+        except OSError as error:
+            self.skipTest(f'Symlinks unavailable: {error}')
+        with self.assertRaisesRegex(WorkflowAdapterError, 'inside its adapter directory'):
+            self.registry.validate('test-video')
 
     def payload(self, **inputs):
         return {'prompt': {'7': {'class_type': 'FreeVideoGenerate', 'inputs': {

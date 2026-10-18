@@ -27,6 +27,7 @@ _AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.opus', '.m4a', '.aac'}
 _VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
 _MEDIA_INPUTS = {'assets', 'first', 'last', 'reference', 'reference_audio',
                  'reference_video', *(f'reference_{i}' for i in range(2, 9))}
+_DOCUMENT_MAX_BYTES = 8 * 1024 * 1024
 
 
 def _fail(message):
@@ -350,11 +351,17 @@ def _native_media(inputs, prompt, input_directory, prefix, owner_id):
     return loaders
 
 
-def _read(path, directory):
+def _read(path, directory, *, max_bytes=None):
     if path.resolve().parent != directory:
         _fail(f'{path.name} must be a regular file inside its adapter directory.')
     try:
-        return json.loads(path.read_text(encoding='utf-8-sig'))
+        if max_bytes is None:
+            return json.loads(path.read_text(encoding='utf-8-sig'))
+        with path.open('rb') as source:
+            data = source.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            _fail(f'{path.name} exceeds the {max_bytes // (1024 * 1024)} MiB workflow document limit.')
+        return json.loads(data.decode('utf-8-sig'))
     except (OSError, ValueError) as error:
         raise WorkflowAdapterError(f'Cannot read {path.name}: {error}') from error
 
@@ -427,15 +434,58 @@ def _manifest(manifest, graph, adapter_id):
     return manifest
 
 
-class Registry:
-    """Read an admin-controlled root containing one directory per adapter ID."""
+def load_workflow_document(document, workflow_id=None):
+    """Validate a native ComfyUI document and return its manifest/API pair.
 
-    def __init__(self, root, *, input_directory=None):
+    This pure helper also lets migration/install tools check a document before
+    writing it. The caller, never a generation request, owns file installation.
+    """
+    if (not isinstance(document, dict) or type(document.get('version')) not in (int, float)
+            or document['version'] not in (0.4, 1)
+            or not isinstance(document.get('nodes'), list)
+            or not isinstance(document.get('links'), list)):
+        _fail('Workflow document must be a native ComfyUI workflow with version, nodes and links.')
+    extra = document.get('extra')
+    envelope = extra.get('freevideo') if isinstance(extra, dict) else None
+    if not isinstance(envelope, dict) or type(envelope.get('version')) is not int or envelope['version'] != 1:
+        _fail('Workflow document extra.freevideo must declare version: 1.')
+    graph = _graph(envelope.get('api'))
+    manifest = envelope.get('manifest')
+    adapter_id = workflow_id if workflow_id is not None else manifest.get('id') if isinstance(manifest, dict) else None
+    manifest = _manifest(manifest, graph, _identifier(adapter_id, 'Workflow ID'))
+    visual_nodes = {}
+    for node in document['nodes']:
+        if (not isinstance(node, dict) or type(node.get('id')) not in (int, str)
+                or not _NODE.fullmatch(str(node['id']))
+                or not isinstance(node.get('type'), str) or not node['type'].strip()):
+            _fail('Workflow document visual nodes need unique IDs and type strings.')
+        node_id = str(node['id'])
+        if node_id in visual_nodes:
+            _fail('Workflow document visual nodes need unique IDs and type strings.')
+        visual_nodes[node_id] = node
+    for node_id, node in graph.items():
+        if node_id not in visual_nodes or visual_nodes[node_id]['type'] != node['class_type']:
+            _fail(f'Workflow API node {node_id!r} must match a visual node ID and type; save it again in ComfyUI.')
+    return manifest, graph
+
+
+class Registry:
+    """Read trusted native documents, with legacy adapter directories supported."""
+
+    def __init__(self, root, *, input_directory=None, editor_directory=None):
         self.root = Path(root).resolve()
         self.input_directory = Path(input_directory).resolve() if input_directory is not None else None
+        self.editor_directory = Path(editor_directory).resolve() if editor_directory is not None else None
 
     def _load(self, adapter_id):
         adapter_id = _identifier(adapter_id, 'Workflow ID')
+        if self.editor_directory is not None:
+            path = self.editor_directory / f'{adapter_id}.json'
+            if path.exists() or path.is_symlink():
+                try:
+                    return load_workflow_document(_read(path, self.editor_directory, max_bytes=_DOCUMENT_MAX_BYTES), adapter_id)
+                except WorkflowAdapterError as error:
+                    raise WorkflowAdapterError(f'Workflow {adapter_id!r}: {error}') from error
         directory = self.root / adapter_id
         if directory.resolve().parent != self.root or not directory.is_dir():
             _fail(f'Workflow {adapter_id!r} is not registered. Install its adapter directory on the server.')
@@ -458,10 +508,23 @@ class Registry:
 
     def catalog(self):
         """Return metadata only; malformed installed adapters fail visibly."""
-        if not self.root.exists():
-            return []
-        return [self.validate(path.name) for path in sorted(self.root.iterdir())
-                if path.is_dir() and not path.name.startswith('.')]
+        ids = {path.name for path in self.root.iterdir()
+               if path.is_dir() and not path.name.startswith('.')} if self.root.exists() else set()
+        if self.editor_directory is not None and self.editor_directory.exists():
+            for path in sorted(self.editor_directory.glob('*.json')):
+                if path.name.startswith('.'):
+                    continue
+                try:
+                    document = _read(path, self.editor_directory, max_bytes=_DOCUMENT_MAX_BYTES)
+                    extra = document.get('extra') if isinstance(document, dict) else None
+                    # Ordinary native workflows are not implicitly registered.
+                    if not isinstance(extra, dict) or 'freevideo' not in extra:
+                        continue
+                    load_workflow_document(document, _identifier(path.stem, 'Workflow ID'))
+                    ids.add(path.stem)
+                except WorkflowAdapterError as error:
+                    raise WorkflowAdapterError(f'Workflow {path.stem!r}: {error}') from error
+        return [self.validate(adapter_id) for adapter_id in sorted(ids)]
 
     def expand(self, payload):
         """Return a copied prompt with workflow nodes injected before validation."""

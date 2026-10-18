@@ -31,13 +31,75 @@ time. A fallback report with scope `save` cannot claim full execution timing.
 Failed and cancelled runs stop their elapsed timer and keep partial progress.
 Active snapshots can restore the last status after a browser refresh.
 
-The workflow backend runs an administrator-installed ComfyUI API prompt behind
+The workflow backend runs a registered ComfyUI API prompt behind
 the existing `FreeVideoGenerate` node. The original node ID, VIDEO output and
 library ownership remain intact. The server expands the registered graph before
 ComfyUI prompt validation. It never accepts an executable adapter graph from the
-client.
+generation request. Native ComfyUI workflow saves update registered documents
+through ComfyUI's existing user-data storage.
 
-Each adapter is a directory below ComfyUI's registry root
+## One document for the editor and FreeVideo
+
+In the full ComfyUI editor, use **Extensions → FreeVideo: open workflow editor**
+to create a document from an installed legacy profile. Then refresh the native
+**Workflows** sidebar and open **FreeVideo / <workflow-id>**. Edit nodes normally
+and use the existing **Ctrl+S** command. The extension augments native user-data
+saving; it does not replace the keyboard shortcut. If a filename dialog appears,
+enter only the basename: ComfyUI already supplies the current directory.
+
+Each save exports the current graph using ComfyUI's serializer, updates Advanced
+defaults from the bound widgets, and stores everything in one JSON. Reload the
+FreeVideo page to refresh its controls; generation reads the document directly.
+Removing a declared input/output or setting target prevents saving with an
+explicit error, so bindings must be updated together with structural edits.
+
+The canonical document is a normal native ComfyUI workflow saved as
+`<user-directory>/default/workflows/FreeVideo/<workflow-id>.json`. It opens in
+the visual editor and carries its executable export and FreeVideo contract:
+
+```json
+{
+  "version": 0.4,
+  "nodes": [{"id": 1, "type": "EmptyImage"}, {"id": 2, "type": "CreateVideo"}],
+  "links": [],
+  "extra": {
+    "freevideo": {
+      "version": 1,
+      "manifest": {"version": 1, "id": "my-video", "title": "My video",
+        "inputs": {"width": {"node": "1", "input": "width"}},
+        "outputs": {"video": {"node": "2", "output": 0}}},
+      "api": {
+        "1": {"class_type": "EmptyImage", "inputs": {"width": 512, "height": 512, "batch_size": 1, "color": 0}},
+        "2": {"class_type": "CreateVideo", "inputs": {"images": ["1", 0], "fps": 24}}
+      }
+    }
+  }
+}
+```
+
+This shortened example shows the envelope; the native editor supplies full visual
+node and link data. API node IDs are strings matching the native visual node IDs;
+every executable node must have the same visual node type. Editor-only nodes may
+be absent from the API export. Bindings refer to the exported API IDs. Saving
+must refresh the API export and manifest together with the visual graph; the
+server validates structure, node identity and bindings, but cannot reconstruct
+arbitrary custom-node widget serialization to prove every literal matches.
+
+`Registry(..., editor_directory=trusted_native_workflow_directory)` reads these
+flat JSON files. The filename stem must exactly match `manifest.id`. Documents
+are limited to 8 MiB and cannot resolve outside that configured directory.
+Native workflow versions 0.4 and 1 are accepted. Ordinary native workflows without
+`extra.freevideo` do not appear in the catalog. Malformed registered documents
+fail explicitly. A canonical file takes precedence over a legacy adapter with
+the same ID; an invalid canonical file never silently executes the legacy graph.
+The document directory is server configuration and cannot be supplied in a
+generation request. There is no separate FreeVideo write endpoint.
+
+The pure `load_workflow_document(document, workflow_id=None)` helper validates an
+already decoded native document and returns `(manifest, api)`, for installation
+or migration tools. Supplying `workflow_id` also checks the intended filename ID.
+
+Legacy adapters remain supported as directories below
 `<user-directory>/default/freevideo/workflows`:
 
 ```text
@@ -48,7 +110,7 @@ Each adapter is a directory below ComfyUI's registry root
 The server administrator installs and reviews these files. Installing an adapter
 grants its graph the same execution privileges as other ComfyUI workflows.
 Custom node dependencies and model files must already exist on that server.
-Export `workflow_api.json` using ComfyUI's API prompt export; a UI workflow with
+For this legacy layout, export `workflow_api.json` using ComfyUI's API prompt export; a UI workflow with
 `nodes` and `links` arrays is not accepted. IDs use 1–64 letters, digits,
 underscores or hyphens, starting with a letter or digit. The manifest ID must
 match its directory. File and directory links cannot escape that directory/root.
@@ -216,7 +278,8 @@ settings to use its updated defaults.
 ```python
 from freevideo_engine.workflow_adapter import Registry, WorkflowAdapterError
 
-registry = Registry(admin_configured_root, input_directory=comfy_input_directory)
+registry = Registry(admin_configured_root, input_directory=comfy_input_directory,
+                    editor_directory=trusted_native_workflow_directory)
 metadata = registry.catalog()
 metadata = registry.validate("my-video")
 expanded_payload = registry.expand(original_prompt_payload)
