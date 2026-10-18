@@ -261,10 +261,11 @@ class NodeTests(unittest.TestCase):
             prepare.assert_not_called()
 
     def test_workflow_hook_failure_is_a_queue_validation_error(self):
-        payload = {'prompt': {'1': {'class_type': 'FreeVideoGenerate', 'inputs': {'backend': 'workflow'}}}}
+        payload = {'prompt': {'1': {'class_type': 'FreeVideoGenerate', 'inputs': {'backend': 'workflow', 'frames': ''}}}}
         with patch.object(comfy_workflows, 'registry', return_value=SimpleNamespace(expand=Mock(side_effect=ValueError('Unsupported media')))):
             result = self.nodes.clean_prompt(payload)
         self.assertEqual(result['prompt']['1']['inputs']['workflow_error'], 'Unsupported media')
+        self.assertEqual(result['prompt']['1']['inputs']['frames'], 0)
         self.assertEqual(self.nodes.FreeVideoGenerate.validate_inputs(text='', width=256, height=256,
             seconds=2, seed=1, backend='workflow', workflow_error='Unsupported media'), 'Unsupported media')
 

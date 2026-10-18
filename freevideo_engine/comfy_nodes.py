@@ -25,6 +25,9 @@ def clean_prompt(json_data):
     prompt = json_data.get('prompt') if isinstance(json_data, dict) else None
     for node in prompt.values() if isinstance(prompt, dict) else ():
         inputs = node.get('inputs') if isinstance(node, dict) and node.get('class_type') == 'FreeVideoGenerate' else None
+        if (isinstance(inputs, dict) and inputs.get('backend') == 'workflow'
+                and inputs.get('frames') in (None, '')):
+            inputs['frames'] = 0
         if (isinstance(inputs, dict) and inputs.get('backend', 'vdn') != 'workflow'
                 and 'frames' in inputs and not isinstance(inputs['frames'], list)):
             frames = node_frames(inputs['frames'])
