@@ -29,6 +29,11 @@ export class PromptVersions {
 }
 
 // Best-effort imports have no UI state and never hold up enhancement or video.
+export function needsPromptPrestart(versions, context) {
+    if (!versions.value.enabled || versions.value.useOriginal || !versions.value.original.trim()) return false;
+    try { return !versions.fresh(context()); } catch { return false; }
+}
+
 export function promptPrestart(api, nodeId, enabled, alive = () => true) {
     let pending = null, completed = false;
     // Enhancement can be turned off, or the panel closed, while the token is fetched.
@@ -110,7 +115,8 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     install.append(detail, actions);
     bar.append(label, tabs, redo, cancel); element.append(bar, editor || input, status, install);
     let disposed = false, token = '', job = '', running = null, consent = null, cancelling = false, waiting = false, replacing = false;
-    const prestart = promptPrestart(api, node.id, () => versions.value.enabled, () => !disposed && !input.disabled);
+    const needsRewrite = () => needsPromptPrestart(versions, context);
+    const prestart = promptPrestart(api, node.id, needsRewrite, () => !disposed && !input.disabled);
     const onFocus = () => { if (versions.value.enabled) void prestart.request(); };
     input.addEventListener('focus', onFocus);
     if (versions.value.enabled) void prestart.request();
