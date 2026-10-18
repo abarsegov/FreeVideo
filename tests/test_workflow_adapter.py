@@ -100,9 +100,10 @@ class WorkflowAdapterTests(unittest.TestCase):
             self.registry.expand(self.payload(backend='vdn', workflow_run_id='spoof'))
 
     def test_empty_serialized_server_fields_are_allowed(self):
-        result, owner, _ = self.expanded_parts(self.payload(workflow_run_id='', workflow_result=None))
+        result, owner, _ = self.expanded_parts(self.payload(workflow_run_id='', workflow_result=None, workflow_error='old error'))
         self.assertEqual(len(owner['inputs']['workflow_run_id']), 32)
         self.assertIsInstance(owner['inputs']['workflow_result'], list)
+        self.assertNotIn('workflow_error', owner['inputs'])
         native = self.payload(backend='vdn', workflow_run_id='', workflow_result=None)
         self.assertEqual(self.registry.expand(native), native)
 
@@ -130,9 +131,96 @@ class WorkflowAdapterTests(unittest.TestCase):
         self.assertNotIn('media', result['prompt']['7']['inputs'])
         self.assertNotIn('loras', result['prompt']['7']['inputs'])
         self.assertIn('media', payload['prompt']['7']['inputs'])
-        payload['prompt']['media']['inputs']['first'] = ['other', 0]
+        payload['prompt']['media']['inputs']['reference'] = ['other', 0]
         with self.assertRaisesRegex(WorkflowAdapterError, 'media'):
             self.registry.expand(payload)
+
+    def media_payload(self, assets='[]', **connections):
+        payload = self.payload(media=['media', 0])
+        payload['prompt']['media'] = {'class_type': 'FreeVideoMedia', 'inputs': {'assets': assets, **connections}}
+        return payload
+
+    def test_native_connected_keyframes_are_forwarded(self):
+        payload = self.media_payload(first=['source', 0])
+        payload['prompt']['source'] = {'class_type': 'LoadImage', 'inputs': {'image': 'test.png'}}
+        result, owner, video = self.expanded_parts(payload)
+        self.assertEqual(video['inputs']['images'], ['source', 0])
+        self.assertNotIn('media', owner['inputs'])
+        self.assertEqual(owner['inputs']['first'], ['source', 0])
+        self.assertIn('media', payload['prompt']['7']['inputs'])
+
+    def test_uploaded_native_keyframes_use_core_loader_and_manifest_bindings(self):
+        input_directory = self.root / 'input'
+        (input_directory / 'nested').mkdir(parents=True)
+        for name in ('first.png', 'last.jpg'):
+            (input_directory / 'nested' / name).write_bytes(b'validated by ComfyUI LoadImage')
+        self.registry = Registry(self.root, input_directory=input_directory)
+        self.graph['last'] = {'class_type': 'SomeImageConsumer', 'inputs': {'image': ['image', 0]}}
+        self.manifest['inputs']['last_frame'] = {'node': 'last', 'input': 'image'}
+        self.write()
+        payload = self.media_payload(json.dumps([
+            {'file': 'nested/first.png', 'role': 'first'},
+            {'file': 'nested/last.jpg', 'role': 'last', 'enabled': True},
+        ]))
+        result, owner, video = self.expanded_parts(payload)
+        first_id = video['inputs']['images'][0]
+        last_id = owner['inputs']['last'][0]
+        self.assertEqual(result['prompt'][first_id], {'class_type': 'LoadImage', 'inputs': {'image': 'nested/first.png'}})
+        self.assertEqual(result['prompt'][last_id]['inputs']['image'], 'nested/last.jpg')
+        last_consumer = next(node for node in result['prompt'].values() if node['class_type'] == 'SomeImageConsumer')
+        self.assertEqual(last_consumer['inputs']['image'], [last_id, 0])
+        self.assertNotIn('media', owner['inputs'])
+
+    def test_disabled_native_rows_are_empty_without_file_access(self):
+        payload = self.media_payload(json.dumps([
+            {'file': 'missing.mp4', 'role': 'reference', 'enabled': False, 'cast': {'id': 'person'}},
+        ]), first=None, reference_audio=None)
+        _, owner, _ = self.expanded_parts(payload)
+        self.assertNotIn('media', owner['inputs'])
+
+    def test_native_media_rejects_unsupported_conditioning_and_bad_rows(self):
+        for rows in ([{'file': 'test.png', 'role': 'reference'}],
+                     [{'file': 'test.png', 'role': 'first', 'early_steps': 2}],
+                     [{'file': 'test.png', 'role': 'first', 'enabled': 0}],
+                     [{'enabled': False, 'unexpected': True}], {}, [None]):
+            with self.subTest(rows=rows), self.assertRaisesRegex(WorkflowAdapterError, 'media'):
+                self.registry.expand(self.media_payload(json.dumps(rows)))
+        for name in ('reference', 'reference_8', 'reference_audio', 'unknown'):
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, 'media'):
+                self.registry.expand(self.media_payload(**{name: ['source', 0]}))
+        with self.assertRaisesRegex(WorkflowAdapterError, 'input directory'):
+            self.registry.expand(self.media_payload('[{"file":"test.png","role":"first"}]'))
+
+    def test_native_media_rejects_unsafe_paths_and_duplicate_frames(self):
+        input_directory = self.root / 'input'
+        input_directory.mkdir()
+        (input_directory / 'test.png').write_bytes(b'image')
+        self.registry = Registry(self.root, input_directory=input_directory)
+        for name in ('../outside.png', '/outside.png', 'C:/outside.png', 'sub\\test.png',
+                     'test.png [output]', 'movie.mp4', 'missing.png'):
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, 'media'):
+                self.registry.expand(self.media_payload(json.dumps([{'file': name, 'role': 'first'}])))
+        row = {'file': 'test.png', 'role': 'first'}
+        for payload in (self.media_payload(json.dumps([row, row])),
+                        self.media_payload(json.dumps([row]), first=['source', 0])):
+            with self.assertRaisesRegex(WorkflowAdapterError, 'duplicate'):
+                self.registry.expand(payload)
+        payload = self.media_payload(first=['source', 0])
+        payload['prompt']['7']['inputs']['first'] = ['other', 0]
+        with self.assertRaisesRegex(WorkflowAdapterError, 'duplicate'):
+            self.registry.expand(payload)
+
+    def test_native_media_requires_supported_frame_binding(self):
+        payload = self.media_payload(last=['source', 0])
+        payload['prompt']['source'] = {'class_type': 'LoadImage', 'inputs': {'image': 'test.png'}}
+        with self.assertRaisesRegex(WorkflowAdapterError, 'does not support last'):
+            self.registry.expand(payload)
+
+    def test_ui_empty_frame_overrides_follow_duration(self):
+        for frames in ('', None):
+            with self.subTest(frames=frames):
+                result, _, video = self.expanded_parts(self.payload(frames=frames))
+                self.assertEqual(result['prompt'][video['inputs']['images'][0]]['inputs']['batch_size'], 60)
 
     def test_invalid_ids_and_unregistered_workflows(self):
         for value in ['../test-video', '/test-video', 'a/b', 'a\\b', '.', '', None]:

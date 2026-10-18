@@ -228,8 +228,7 @@ class NodeTests(unittest.TestCase):
         payload = {'prompt': {'1': {'class_type': 'FreeVideoGenerate', 'inputs': {'frames': ''}}}}
         expand = Mock(side_effect=ValueError('adapter binding is missing'))
         with patch.object(comfy_workflows, 'registry', return_value=SimpleNamespace(expand=expand)):
-            with self.assertRaisesRegex(ValueError, 'adapter binding is missing'):
-                self.nodes.clean_prompt(payload)
+            self.nodes.clean_prompt(payload)
         self.assertEqual(payload['prompt']['1']['inputs']['frames'], 0)
 
     def test_workflow_frames_skip_vdn_frame_grid_cleanup(self):
@@ -243,7 +242,7 @@ class NodeTests(unittest.TestCase):
 
     def test_lazy_workflow_prepares_before_requesting_video_dependency(self):
         with patch.object(comfy_workflows, 'prepare') as prepare:
-            self.assertEqual(self.nodes.FreeVideoGenerate.check_lazy_status(backend='workflow'), ['workflow_result'])
+            self.assertEqual(self.nodes.FreeVideoGenerate.check_lazy_status(backend='workflow', workflow_run_id='server-id'), ['workflow_result'])
             prepare.assert_called_once_with()
             prepare.reset_mock()
             self.assertEqual(self.nodes.FreeVideoGenerate.check_lazy_status(backend='workflow', workflow_result='VIDEO'), [])
@@ -253,14 +252,28 @@ class NodeTests(unittest.TestCase):
     def test_lazy_prepare_failure_does_not_request_dependency(self):
         with patch.object(comfy_workflows, 'prepare', side_effect=RuntimeError('worker did not release')):
             with self.assertRaisesRegex(RuntimeError, 'worker did not release'):
+                self.nodes.FreeVideoGenerate.check_lazy_status(backend='workflow', workflow_run_id='server-id')
+
+    def test_unexpanded_workflow_fails_before_requesting_missing_link(self):
+        with patch.object(comfy_workflows, 'prepare') as prepare:
+            with self.assertRaisesRegex(ValueError, 'not expanded'):
                 self.nodes.FreeVideoGenerate.check_lazy_status(backend='workflow')
+            prepare.assert_not_called()
+
+    def test_workflow_hook_failure_is_a_queue_validation_error(self):
+        payload = {'prompt': {'1': {'class_type': 'FreeVideoGenerate', 'inputs': {'backend': 'workflow'}}}}
+        with patch.object(comfy_workflows, 'registry', return_value=SimpleNamespace(expand=Mock(side_effect=ValueError('Unsupported media')))):
+            result = self.nodes.clean_prompt(payload)
+        self.assertEqual(result['prompt']['1']['inputs']['workflow_error'], 'Unsupported media')
+        self.assertEqual(self.nodes.FreeVideoGenerate.validate_inputs(text='', width=256, height=256,
+            seconds=2, seed=1, backend='workflow', workflow_error='Unsupported media'), 'Unsupported media')
 
     def test_backend_schema_appended_after_existing_widgets(self):
         schema = self.nodes.FreeVideoGenerate.define_schema()
         names = [row.id for row in schema.inputs]
-        self.assertEqual(names[-4:], ['backend', 'workflow_id', 'workflow_result', 'workflow_run_id'])
-        self.assertEqual(schema.inputs[-4].options['default'], 'vdn')
-        self.assertTrue(schema.inputs[-2].options['lazy'])
+        self.assertEqual(names[-5:], ['backend', 'workflow_id', 'workflow_result', 'workflow_run_id', 'workflow_error'])
+        self.assertEqual(schema.inputs[-5].options['default'], 'vdn')
+        self.assertTrue(schema.inputs[-3].options['lazy'])
 
 
 if __name__ == '__main__':

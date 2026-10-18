@@ -33,7 +33,17 @@ def clean_prompt(json_data):
                              str(inputs['frames'])[:40])
                 inputs['frames'] = frames
     from .comfy_workflows import registry
-    return registry().expand(json_data)
+    try:
+        return registry().expand(json_data)
+    except (OSError, ValueError) as error:
+        # Comfy logs and swallows exceptions from on_prompt handlers. Carry a
+        # validation error instead, so an unexpanded graph never reaches lazy execution.
+        for node in prompt.values() if isinstance(prompt, dict) else ():
+            inputs = node.get('inputs', {}) if isinstance(node, dict) else {}
+            if (isinstance(node, dict) and node.get('class_type') == 'FreeVideoGenerate'
+                    and isinstance(inputs, dict) and inputs.get('backend') == 'workflow'):
+                inputs['workflow_error'] = str(error)
+        return json_data
 
 
 def register_prompt_cleanup():
@@ -133,6 +143,8 @@ class FreeVideoGenerate(io.ComfyNode):
                 io.Video.Input('workflow_result', optional=True, advanced=True, lazy=True, extra_dict={'hidden': True}),
                 io.String.Input('workflow_run_id', default='', optional=True, advanced=True,
                     extra_dict={'hidden': True}),
+                io.String.Input('workflow_error', default='', optional=True, advanced=True,
+                    extra_dict={'hidden': True}),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -142,12 +154,14 @@ class FreeVideoGenerate(io.ComfyNode):
     @classmethod
     def validate_inputs(cls, text, width, height, seconds, seed, continue_from='', frames=0, two_pass=True,
                         preview=False, refine_from='', base_steps=8, refine_steps=3, step_cache='none',
-                        upscale_factor='2', backend='vdn', workflow_id=''):
+                        upscale_factor='2', backend='vdn', workflow_id='', workflow_error=''):
         # ComfyUI marks every input named here when a check fails, so only the checked widgets are
         # listed. Linked pictures, media and conditioning have no value before the run anyway.
         # step_cache and upscale_factor are named so ComfyUI skips their option lists: an older saved
         # workflow puts '' there, and execute uses no cache and the 2x upscale for a value that is not an option.
         if backend == 'workflow':
+            if workflow_error:
+                return workflow_error
             from .comfy_workflows import registry
             try:
                 registry().validate(workflow_id)
@@ -188,11 +202,13 @@ class FreeVideoGenerate(io.ComfyNode):
         return float('nan')
 
     @classmethod
-    def check_lazy_status(cls, backend='vdn', workflow_result=None, **kwargs):
+    def check_lazy_status(cls, backend='vdn', workflow_result=None, workflow_run_id='', **kwargs):
         # Release FreeVideo's external worker before Comfy evaluates the linked
         # workflow. Doing this in execute would be too late: its models would
         # already have loaded to produce workflow_result.
         if backend == 'workflow' and workflow_result is None:
+            if not workflow_run_id:
+                raise ValueError('Workflow graph was not expanded. Select an installed workflow and submit a new run.')
             from .comfy_workflows import prepare
             prepare()
             return ['workflow_result']

@@ -6,7 +6,7 @@ an adapter ID and ordinary FreeVideo input values, never an executable template.
 from copy import deepcopy
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import uuid
 
@@ -21,6 +21,9 @@ _CANONICAL = {'prompt', 'seed', 'width', 'height', 'seconds', 'frames', 'fps',
               'first_frame', 'last_frame'}
 _CAPABILITIES = {'single_shot': True, 'preview': False, 'refine': False,
                  'continuation': False}
+_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'}
+_MEDIA_INPUTS = {'assets', 'first', 'last', 'reference', 'reference_audio',
+                 *(f'reference_{i}' for i in range(2, 9))}
 
 
 def _fail(message):
@@ -73,6 +76,80 @@ def _empty_native_provider(value, kind, prompt, seen=None):
             continue
         return False
     return True
+
+
+def _native_media(inputs, prompt, input_directory, prefix):
+    """Lower native keyframes to IMAGE links without executing their provider."""
+    value = inputs.get('media')
+    if not _present(value):
+        return {}
+    if not _link(value) or value[1] != 0:
+        _fail('Workflow media must link to a native FreeVideoMedia output.')
+    node = prompt.get(value[0])
+    if not isinstance(node, dict) or node.get('class_type') != 'FreeVideoMedia' or not isinstance(node.get('inputs'), dict):
+        _fail('Workflow media must link to a native FreeVideoMedia output.')
+    media = node['inputs']
+    for name, item in media.items():
+        if name not in _MEDIA_INPUTS and _present(item):
+            _fail(f'Workflow media has an unsupported input {name!r}.')
+        if name not in ('assets', 'first', 'last') and _present(item):
+            _fail(f'Workflow media does not support {name}; use first/last frames only.')
+    raw = media.get('assets', '[]')
+    if not isinstance(raw, str) or len(raw) > 128 * 1024:
+        _fail('Workflow media assets must be a JSON array of at most 32 items.')
+    try:
+        rows = json.loads(raw)
+    except ValueError:
+        _fail('Workflow media assets must be a JSON array of at most 32 items.')
+    if not isinstance(rows, list) or len(rows) > 32:
+        _fail('Workflow media assets must be a JSON array of at most 32 items.')
+    frames, loaders = {}, {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {'file', 'role', 'enabled', 'cast', 'early_steps'}:
+            _fail('Invalid workflow media item.')
+        if type(row.get('enabled', True)) is not bool:
+            _fail('Workflow media enabled must be a boolean.')
+        cast = row.get('cast')
+        if 'cast' in row and (not isinstance(cast, dict) or set(cast) != {'id'}
+                              or not isinstance(cast['id'], str) or not 0 < len(cast['id']) <= 128):
+            _fail('Invalid workflow media cast metadata.')
+        if not row.get('enabled', True):
+            continue
+        role, name = row.get('role'), row.get('file')
+        if role not in ('first', 'last'):
+            _fail('Workflow media supports first/last image frames only; references are unsupported.')
+        if 'early_steps' in row:
+            _fail('Workflow media early_steps conditioning is unsupported.')
+        if role in frames:
+            _fail(f'Workflow media contains duplicate {role} frames.')
+        if input_directory is None:
+            _fail('Workflow uploaded media requires a server-configured ComfyUI input directory.')
+        if (not isinstance(name, str) or not name or '\x00' in name or '\\' in name
+                or PurePosixPath(name).is_absolute() or PureWindowsPath(name).drive
+                or '..' in PurePosixPath(name).parts or ':' in name
+                or PurePosixPath(name).suffix.lower() not in _IMAGE_EXTENSIONS):
+            _fail('Workflow media frames must be relative image files inside ComfyUI input.')
+        path = (input_directory / name).resolve()
+        try:
+            relative = path.relative_to(input_directory)
+        except ValueError:
+            _fail('Workflow media link points outside ComfyUI input.')
+        if not path.is_file():
+            _fail('Upload or select the missing workflow media image: ' + name)
+        loader_id = prefix + 'media_' + role
+        loaders[loader_id] = {'class_type': 'LoadImage', 'inputs': {'image': relative.as_posix()}}
+        frames[role] = [loader_id, 0]
+    for role in ('first', 'last'):
+        if _present(media.get(role)):
+            if role in frames:
+                _fail(f'Workflow media has both an uploaded and connected {role} frame; disable the duplicate.')
+            frames[role] = media[role]
+        if role in frames:
+            if _present(inputs.get(role)):
+                _fail(f'Workflow has both direct and media {role} frames; remove the duplicate.')
+            inputs[role] = frames[role]
+    del inputs['media']
+    return loaders
 
 
 def _read(path, directory):
@@ -158,8 +235,9 @@ def _manifest(manifest, graph, adapter_id):
 class Registry:
     """Read an admin-controlled root containing one directory per adapter ID."""
 
-    def __init__(self, root):
+    def __init__(self, root, *, input_directory=None):
         self.root = Path(root).resolve()
+        self.input_directory = Path(input_directory).resolve() if input_directory is not None else None
 
     def _load(self, adapter_id):
         adapter_id = _identifier(adapter_id, 'Workflow ID')
@@ -206,7 +284,14 @@ class Registry:
                 _fail('workflow_result and workflow_run_id are server-owned; submit the original unexpanded prompt.')
             if inputs.get('backend', 'vdn') != 'workflow':
                 continue
-            for name in ('media', 'loras'):
+            inputs.pop('workflow_error', None)
+            run_id = uuid.uuid4().hex
+            prefix = f'__freevideo_workflow_{run_id}_'
+            loaders = _native_media(inputs, prompt, self.input_directory, prefix)
+            if any(node_id in prompt for node_id in loaders):
+                _fail('Workflow node namespace collision; submit the original prompt again.')
+            prompt.update(loaders)
+            for name in ('loras',):
                 if _empty_native_provider(inputs.get(name), name, prompt):
                     del inputs[name]
             for name in ('preview', 'refine_from', 'continue_from', 'references', 'media', 'loras',
@@ -215,8 +300,6 @@ class Registry:
                     _fail(f'Workflow backend does not support {name}; use a single-shot request without that input.')
             manifest, graph = self._load(inputs.get('workflow_id'))
             values = self._values(inputs, manifest, prompt, str(owner_id))
-            run_id = uuid.uuid4().hex
-            prefix = f'__freevideo_workflow_{run_id}_'
             names = {node_id: prefix + node_id for node_id in graph}
             if any(node_id in prompt for node_id in names.values()):
                 _fail('Workflow node namespace collision; submit the original prompt again.')
@@ -264,6 +347,8 @@ class Registry:
                                     or not math.isfinite(values['seconds']) or values['seconds'] <= 0):
             _fail('Workflow duration must be a finite positive number of seconds.')
         frames = inputs.get('frames', 0)
+        if frames is None or frames == '':
+            frames = 0
         if type(frames) is not int or frames < 0:
             _fail('Workflow frames must be a nonnegative integer; use 0 to follow duration.')
         if frames > 0:

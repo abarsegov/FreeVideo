@@ -68,14 +68,30 @@ positive integers, seed is a nonnegative integer, and seconds is finite and
 positive. An adapter can use either duration or frames, or both, through its
 bindings. Unbound scalar values do not alter the installed template.
 
-This version supports single-shot generation. Preview, refinement, continuation,
-references, LoRAs, native conditioning and unified media are unsupported and
-nonempty values fail before queueing. Empty native `FreeVideoMedia` and
-`FreeVideoLoRAStack` connections are removed from the owner only when the compiler
-can prove their JSON arrays and optional inputs empty. Nonempty or unknown
-provider links are refused. Native two-pass and sampling controls do not configure
-the registered graph; configure that graph on disk. Studio chain execution is
-outside this contract.
+This version supports single-shot generation, including native Studio first/last
+frame media. Connected `FreeVideoMedia.first`/`last` IMAGE links are forwarded to
+the corresponding canonical binding. Enabled uploaded image rows with role
+`first` or `last` become core `LoadImage` nodes. The server must configure the
+registry with its trusted ComfyUI input directory; filenames must be relative
+image paths that resolve to existing files inside it. Absolute paths, traversal,
+links escaping input, output/temp annotations and nonimage files are refused.
+ComfyUI validates the installed loader, image contents and IMAGE socket types.
+The adapter must declare each supplied frame binding. Duplicate uploaded,
+connected or direct frames produce an error rather than choosing one silently.
+
+Empty native media and media containing only disabled rows are disconnected
+without executing the provider. Disabled rows retain validated native metadata,
+including optional character IDs, but require no file access. Native media's
+schema has no scalar metadata defaults. Invalid JSON, unknown providers and
+nonempty unknown inputs are refused. Preview, refinement, continuation,
+references (image/video/audio), LoRAs, `early_steps` and native conditioning remain
+unsupported and fail before queueing. Empty native `FreeVideoLoRAStack`
+connections are removed only when the compiler can prove the whole chain empty.
+Native two-pass and sampling controls do not configure the registered graph;
+configure that graph on disk. Studio chain execution is outside this contract.
+
+An empty or null frame-count override follows duration, matching Studio's optional
+widget serialization; other frame-count values must be nonnegative integers.
 
 Each expansion creates a fresh UUID, namespaces the registered nodes, rewrites
 their internal links and binds canonical values. The original node receives
@@ -95,11 +111,15 @@ graph. Returning to VDN restores its sampling controls.
 ```python
 from freevideo_engine.workflow_adapter import Registry, WorkflowAdapterError
 
-registry = Registry(admin_configured_root)
+registry = Registry(admin_configured_root, input_directory=comfy_input_directory)
 metadata = registry.catalog()
 metadata = registry.validate("my-video")
 expanded_payload = registry.expand(original_prompt_payload)
 ```
+
+`input_directory` is optional for text-only requests and connected IMAGE inputs.
+It must come from server configuration, never a client request. Without it,
+uploaded media receives a configuration error.
 
 Catalog metadata exposes `id`, `title`, supported input names and capabilities
 (`single_shot`, `preview`, `refine`, `continuation`), without executable graph

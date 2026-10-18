@@ -19,7 +19,7 @@ def registry():
         import folder_paths
         from .workflow_adapter import Registry
         root = Path(folder_paths.get_user_directory()) / 'default' / 'freevideo' / 'workflows'
-        _registry = Registry(root)
+        _registry = Registry(root, input_directory=folder_paths.get_input_directory())
     return _registry
 
 
