@@ -12,7 +12,7 @@ export function workflowRequestError({backend, workflow, parts = 1, continuing =
 }
 
 export function createWorkflowBackendPicker({api, read, write, t, onChange = () => {}}) {
-    const element = document.createElement('section'); element.className = 'fv-section';
+    const element = document.createElement('section'); element.className = 'fv-section fv-workflow-picker';
     const label = document.createElement('div'); label.className = 'fv-label';
     label.textContent = t('Generation engine', '生成引擎');
     const engine = document.createElement('select'); engine.setAttribute('aria-label', label.textContent);
@@ -21,18 +21,24 @@ export function createWorkflowBackendPicker({api, read, write, t, onChange = () 
     }
     engine.value = read('backend') || 'vdn';
     const workflows = document.createElement('select'); workflows.setAttribute('aria-label', t('Workflow', '工作流'));
+    const engineField = document.createElement('label'); engineField.className = 'fv-backend-field';
+    const engineTitle = document.createElement('span'); engineTitle.textContent = t('Engine', '引擎');
+    engineField.append(engineTitle, engine);
+    const workflowField = document.createElement('label'); workflowField.className = 'fv-backend-field';
+    const workflowTitle = document.createElement('span'); workflowTitle.textContent = t('Workflow', '工作流');
+    workflowField.append(workflowTitle, workflows);
     const note = document.createElement('p'); note.className = 'fv-muted'; note.setAttribute('role', 'status');
-    element.append(label, engine, workflows, note);
+    element.append(label, engineField, workflowField, note);
     let catalog = [], loading = true, failure = '', disposed = false;
     function render() {
-        const custom = engine.value === 'workflow'; workflows.hidden = !custom;
+        const custom = engine.value === 'workflow'; workflowField.hidden = !custom;
         workflows.disabled = loading || !catalog.length;
         note.hidden = !custom;
         const selected = workflowChoice(catalog, workflows.value);
+        workflows.title = selected?.title || '';
         note.textContent = failure || (loading ? t('Loading workflows…', '正在加载工作流…') : !catalog.length
             ? t('No workflows installed. An administrator must register a workflow on this server.', '没有已安装的工作流，请管理员在服务器上注册。')
-            : t('Single clip. Sampling and model settings come from the selected workflow.', '单段视频，采样和模型设置由所选工作流决定。')
-                + (selected ? ' Inputs: ' + selected.inputs.join(', ') : ''));
+            : t('Model and sampling settings are defined by the workflow.', '模型和采样设置由工作流决定。'));
         onChange(custom, selected);
     }
     engine.onchange = () => { write('backend', engine.value); render(); };
