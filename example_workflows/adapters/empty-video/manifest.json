@@ -9,5 +9,13 @@
     "fps": {"node": "video", "input": "fps", "required": true},
     "first_frame": {"node": "video", "input": "images"}
   },
-  "outputs": {"video": {"node": "video", "output": 0}}
+  "outputs": {"video": {"node": "video", "output": 0}},
+  "profile": {
+    "advanced": [
+      {"id": "color", "label": "Solid frame color (RGB integer)", "type": "integer",
+       "default": 0, "min": 0, "max": 16777215, "step": 1,
+       "bindings": [{"node": "image", "input": "color"}]}
+    ],
+    "loras": []
+  }
 }

@@ -5,6 +5,7 @@ import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import {createWorkflowBackendPicker} from './workflow_backend.js';
+import {createWorkflowProfileControls} from './workflow_profile.js';
 import { openSetup } from './setup.js';
 import { feedbackButton, feedbackIssueURL } from './feedback.js';
 import { wordmark } from './wordmark.js';
@@ -1388,12 +1389,24 @@ export function openStudio(node, {extendFrom = null} = {}) {
     generate.dataset.fvGuide = 'generate';
     runrow.append(generate, runOptions);
     runButtonReady = true;
+    const workflowProfile = createWorkflowProfileControls({read: () => value(node, 'workflow_settings'),
+        write: next => set(node, 'workflow_settings', next), t});
+    const nativeAdvanced = new Map([...advanced.children].map(child => [child, child.hidden]));
+    advanced.append(workflowProfile.advanced);
+    const workflowLoraDetails = document.createElement('details'); workflowLoraDetails.className = 'fv-section';
+    const workflowLoraTitle = document.createElement('summary'); workflowLoraTitle.className = 'fv-section-title'; workflowLoraTitle.textContent = 'LoRA';
+    const workflowLoraMount = document.createElement('div'); workflowLoraMount.className = 'fv-expand'; workflowLoraMount.append(workflowProfile.loras);
+    workflowLoraDetails.append(workflowLoraTitle, workflowLoraMount); loraDetails.after(workflowLoraDetails);
     const backendPicker = createWorkflowBackendPicker({api, read: name => value(node, name),
         write: (name, next) => set(node, name, next), t,
-        onChange: custom => {
-            samplingSettings.hidden = custom;
-            samplingFields.hidden = custom; samplingWarning.hidden = custom;
-            if (custom && previewFirst.checked) { previewFirst.checked = false; set(node, 'preview', false); }
+        onChange: (customMode, selectedWorkflow) => {
+            samplingSettings.hidden = customMode;
+            for (const [child, hidden] of nativeAdvanced) child.hidden = customMode && child !== seedFields && child !== custom ? true : hidden;
+            workflowProfile.advanced.hidden = !customMode;
+            loraDetails.hidden = customMode; workflowLoraDetails.hidden = !customMode;
+            workflowProfile.render(customMode ? selectedWorkflow : null);
+            for (const hint of controls.querySelectorAll('.fv-length-hint,.fv-length-plan')) hint.hidden = customMode;
+            if (customMode && previewFirst.checked) { previewFirst.checked = false; set(node, 'preview', false); }
         }});
     controls.prepend(backendPicker.element); cleanup.push(() => backendPicker.dispose());
     const queueActions = el('div', null, 'fv-queue-actions');
@@ -1609,13 +1622,16 @@ export function openStudio(node, {extendFrom = null} = {}) {
             if ((!extension.source || prompt.value.trim()) && await enhancer.beforeGenerate() === false) return;
             if (disposed) return;
             if (selected === 'input' && !dimensionsLinked) await inputRatio(true);
-            const lengthPlan = await lengthControl.ready();
-            if (disposed || lengthControl.blocked) return;
+            const customWorkflow = backendPicker.custom();
+            const lengthPlan = customWorkflow ? null : await lengthControl.ready();
+            if (disposed || (!customWorkflow && lengthControl.blocked)) return;
             if (backendPicker.custom()) {
                 await backendPicker.ready;
                 const problem = backendPicker.error({parts: lengthPlan?.count || 1,
                     continuing: Boolean(extension.source), preview: previewFirst.checked});
                 if (problem) throw new Error(problem);
+                if (!workflowProfile.validate()) return;
+                if (!seconds.reportValidity()) return;
             }
             if (lengthControl.absent && !seconds.reportValidity()) return;
             if (lengthPlan?.count > 1 && chosenMode !== 'single') { status.textContent = t('Videos made in parts cannot use batch or loop.', '分段视频不能批量或循环生成。'); return; }

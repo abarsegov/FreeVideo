@@ -148,6 +148,8 @@ class FreeVideoGenerate(io.ComfyNode):
                     extra_dict={'hidden': True}),
                 io.String.Input('workflow_error', default='', optional=True, advanced=True,
                     extra_dict={'hidden': True}),
+                io.String.Input('workflow_settings', default='{}', optional=True, advanced=True,
+                    extra_dict={'hidden': True}),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -223,12 +225,12 @@ class FreeVideoGenerate(io.ComfyNode):
                 force_regenerate=False, base_steps=8, refine_steps=3, preview=False, refine_from='',
                 continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False,
                 step_cache='none', upscale_factor='2', backend='vdn', workflow_id='', workflow_result=None,
-                workflow_run_id='', **kwargs):
+                workflow_run_id='', workflow_settings='{}', **kwargs):
         if backend == 'workflow':
             from .comfy_workflows import finalize
             return finalize(workflow_result, workflow_id=workflow_id, workflow_run_id=workflow_run_id,
                             text=text, width=width, height=height, seconds=seconds, seed=seed,
-                            frames=frames, hidden=cls.hidden)
+                            frames=frames, hidden=cls.hidden, workflow_settings=workflow_settings)
         if backend != 'vdn':
             raise ValueError('Unknown FreeVideo backend: ' + str(backend))
         from server import PromptServer
@@ -619,6 +621,21 @@ def start_background_compile():
                          delay=OWED_DELAY if compile_owed(root) else START_DELAY)
 
 
+class FreeVideoH3ReferenceImages(io.ComfyNode):
+    """H3 consumes one picture per autogrow socket, not an IMAGE batch."""
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(node_id='FreeVideoH3ReferenceImages', display_name='FreeVideo · H3 reference images',
+            category='FreeVideo/Workflow', inputs=[io.Image.Input('images')],
+            outputs=[io.Image.Output(f'image_{index + 1}') for index in range(9)])
+
+    @classmethod
+    def execute(cls, images):
+        if not 1 <= len(images) <= 9:
+            raise ValueError('H3 workflows support between 1 and 9 reference images.')
+        return io.NodeOutput(*(images[index:index + 1] if index < len(images) else None for index in range(9)))
+
+
 class FreeVideoExtension(ComfyExtension):
     async def get_node_list(self):
         from .comfy_residency import install
@@ -629,4 +646,5 @@ class FreeVideoExtension(ComfyExtension):
         except Exception as error:
             # Optional: the first request compiles what it needs, as before.
             logging.warning('[FreeVideo] Background compile not started: %s', error)
-        return [FreeVideoGenerate, FreeVideoMedia, FreeVideoReference, FreeVideoLoRA, FreeVideoLoRAStack, FreeVideoFrames]
+        return [FreeVideoGenerate, FreeVideoMedia, FreeVideoReference, FreeVideoLoRA, FreeVideoLoRAStack, FreeVideoFrames,
+                FreeVideoH3ReferenceImages]

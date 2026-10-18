@@ -115,7 +115,7 @@ class WorkflowAdapterTests(unittest.TestCase):
 
     def test_rejects_unsupported_features_and_links(self):
         for name, value in [('preview', True), ('refine_from', 'clip.mp4'), ('continue_from', 'clip.mp4'),
-                            ('references', ['other', 0]), ('media', ['other', 0]), ('loras', ['other', 0]),
+                            ('references', ['other', 0]), ('media', ['other', 0]),
                             ('conditioning', ['other', 0]), ('hide_tail', True)]:
             with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, name):
                 self.registry.expand(self.payload(**{name: value}))
@@ -186,7 +186,7 @@ class WorkflowAdapterTests(unittest.TestCase):
             with self.subTest(rows=rows), self.assertRaisesRegex(WorkflowAdapterError, 'media'):
                 self.registry.expand(self.media_payload(json.dumps(rows)))
         for name in ('reference', 'reference_8', 'reference_audio', 'unknown'):
-            with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, 'media'):
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, 'media|does not support'):
                 self.registry.expand(self.media_payload(**{name: ['source', 0]}))
         with self.assertRaisesRegex(WorkflowAdapterError, 'input directory'):
             self.registry.expand(self.media_payload('[{"file":"test.png","role":"first"}]'))
@@ -267,12 +267,159 @@ class WorkflowAdapterTests(unittest.TestCase):
         self.assertNotIn('graph', catalog[0])
         self.assertEqual(Registry(self.root / 'missing').catalog(), [])
 
+    def profile(self):
+        self.graph['settings'] = {'class_type': 'TestSettings', 'inputs': {
+            'steps': 10, 'steps2': 10, 'gain': 1.0, 'enabled': True, 'text': 'old', 'mode': 'fast',
+            'lora_name': 'fixed.safetensors', 'strength': 0.75, 'strength_clip': 0.75, 'lora_enabled': True}}
+        fields = [('steps', 'integer', 12, {'min': 1, 'max': 40, 'step': 1}),
+                  ('gain', 'number', 1.5, {'min': 0, 'max': 3}),
+                  ('enabled', 'boolean', False, {}), ('text', 'string', 'default', {}),
+                  ('mode', 'choice', 'slow', {'options': ['fast', 'slow']})]
+        self.manifest['profile'] = {'advanced': [
+            {'id': key, 'label': key.title(), 'type': kind, 'default': default, **extra,
+             'bindings': [{'node': 'settings', 'input': key}]} for key, kind, default, extra in fields],
+            'loras': [{'id': 'style', 'label': 'Fixed style', 'min': -2, 'max': 2,
+                       'bindings': {'name': [{'node': 'settings', 'input': 'lora_name'}],
+                                    'strength': [{'node': 'settings', 'input': 'strength'},
+                                                 {'node': 'settings', 'input': 'strength_clip'}],
+                                    'enabled': [{'node': 'settings', 'input': 'lora_enabled'}]}}]}
+        self.write()
+
+    def settings_node(self, payload):
+        return next(node['inputs'] for node in self.registry.expand(payload)['prompt'].values()
+                    if node['class_type'] == 'TestSettings')
+
+    def test_profile_defaults_and_public_catalog(self):
+        self.profile()
+        original = deepcopy(self.graph)
+        values = self.settings_node(self.payload())
+        self.assertEqual((values['steps'], values['gain'], values['enabled'], values['text'], values['mode']),
+                         (12, 1.5, False, 'default', 'slow'))
+        self.assertEqual(values['strength'], 0.75)
+        metadata = self.registry.validate('test-video')['profile']
+        self.assertEqual(metadata['loras'][0]['name'], 'fixed.safetensors')
+        self.assertEqual(metadata['loras'][0]['strength'], 0.75)
+        self.assertNotIn('bindings', json.dumps(metadata))
+        self.assertEqual(self.graph, original)
+
+    def test_profile_overrides_multibind_and_disabled_lora(self):
+        self.profile()
+        self.manifest['profile']['advanced'][0]['bindings'].append({'node': 'settings', 'input': 'steps2'})
+        self.write()
+        raw = json.dumps({'test-video': {'advanced': {'steps': 21},
+                                       'loras': {'style': {'strength': 1.25, 'enabled': False}}}})
+        values = self.settings_node(self.payload(workflow_settings=raw))
+        self.assertEqual((values['steps'], values['steps2']), (21, 21))
+        self.assertEqual((values['strength'], values['strength_clip'], values['lora_enabled']), (0, 0, False))
+        self.assertEqual(values['lora_name'], 'fixed.safetensors')
+
+    def test_profile_rejects_unknown_ids_types_ranges_and_graph_tampering(self):
+        self.profile()
+        invalids = [{'advanced': {'unknown': 1}}, {'advanced': {'steps': True}},
+                    {'advanced': {'steps': 1.2}}, {'advanced': {'steps': 41}},
+                    {'advanced': {'gain': float('nan')}}, {'advanced': {'enabled': 0}},
+                    {'advanced': {'mode': 'unknown'}}, {'advanced': {'text': ['node', 0]}},
+                    {'loras': {'unknown': {}}}, {'loras': {'style': {'strength': 3}}},
+                    {'loras': {'style': {'enabled': 1}}}, {'loras': {'style': {'name': 'evil.safetensors'}}},
+                    {'graph': {}}, {'advanced': []}]
+        for value in invalids:
+            with self.subTest(value=value), self.assertRaises(WorkflowAdapterError):
+                self.registry.expand(self.payload(workflow_settings=json.dumps({'test-video': value})))
+        for raw in ('[]', '{', {}, 'null'):
+            with self.subTest(raw=raw), self.assertRaises(WorkflowAdapterError):
+                self.registry.expand(self.payload(workflow_settings=raw))
+
+    def test_profile_other_workflow_settings_are_isolated_and_native_stack_detached(self):
+        self.profile()
+        raw = json.dumps({'another-workflow': {'advanced': {'steps': 999}},
+                          'test-video': {'advanced': {'steps': 19}}})
+        payload = self.payload(workflow_settings=raw, loras=['old', 0])
+        payload['prompt']['old'] = {'class_type': 'FreeVideoLoRAStack', 'inputs': {'adapters': '[{"name":"stale"}]'}}
+        result = self.registry.expand(payload)
+        self.assertNotIn('loras', result['prompt']['7']['inputs'])
+        self.assertEqual(next(node['inputs']['steps'] for node in result['prompt'].values()
+                              if node['class_type'] == 'TestSettings'), 19)
+        self.assertEqual(self.settings_node(self.payload())['steps'], 12)
+
+    def test_profile_manifest_rejects_conflicts_invalid_defaults_and_lora_links(self):
+        self.profile()
+        original = deepcopy(self.manifest)
+        mutations = [lambda p: p['advanced'][0].update(default=50),
+                     lambda p: p['advanced'][0].update(min=True),
+                     lambda p: p['advanced'][0].update(step=0),
+                     lambda p: p['advanced'][0].update(bindings=[{'node': 'image', 'input': 'width'}]),
+                     lambda p: p['advanced'].append(deepcopy(p['advanced'][0])),
+                     lambda p: p['loras'][0]['bindings'].update(name=[{'node': 'video', 'input': 'images'}])]
+        for mutate in mutations:
+            self.manifest = deepcopy(original)
+            mutate(self.manifest['profile'])
+            self.write()
+            with self.subTest(manifest=self.manifest), self.assertRaises(WorkflowAdapterError):
+                self.registry.validate('test-video')
+
+    def test_canonical_multibind(self):
+        self.graph['second'] = deepcopy(self.graph['image'])
+        self.manifest['inputs']['width'] = {'required': True, 'bindings': [
+            {'node': 'image', 'input': 'width'}, {'node': 'second', 'input': 'width'}]}
+        self.write()
+        result = self.registry.expand(self.payload(width=768))
+        self.assertEqual([node['inputs']['width'] for node in result['prompt'].values()
+                          if node['class_type'] == 'EmptyImage'], [768, 768])
+
+    def reference_bindings(self):
+        self.graph['references'] = {'class_type': 'TestReferences', 'inputs': {
+            'images': ['image', 0], 'audio': 'template', 'video': 'template'}}
+        self.manifest['inputs'].update({name: {'node': 'references', 'input': target}
+                                      for name, target in [('reference_images', 'images'),
+                                                           ('reference_audio', 'audio'), ('reference_video', 'video')]})
+        self.write()
+
+    def test_native_uploaded_references_and_connected_image_batch(self):
+        self.reference_bindings()
+        input_directory = self.root / 'input'
+        input_directory.mkdir()
+        for name in ('a.png', 'b.jpg', 'voice.wav', 'clip.mp4'):
+            (input_directory / name).write_bytes(b'validated by core Comfy loaders')
+        self.registry = Registry(self.root, input_directory=input_directory)
+        rows = [{'file': name, 'role': 'reference'} for name in ('a.png', 'b.jpg', 'voice.wav', 'clip.mp4')]
+        payload = self.media_payload(json.dumps(rows), reference=['source', 0])
+        payload['prompt']['source'] = {'class_type': 'LoadImage', 'inputs': {'image': 'existing.png'}}
+        result = self.registry.expand(payload)
+        refs = next(node['inputs'] for node in result['prompt'].values() if node['class_type'] == 'TestReferences')
+        self.assertEqual(result['prompt'][refs['audio'][0]], {'class_type': 'LoadAudio', 'inputs': {'audio': 'voice.wav'}})
+        self.assertEqual(result['prompt'][refs['video'][0]], {'class_type': 'LoadVideo', 'inputs': {'file': 'clip.mp4'}})
+        batches = [node for node in result['prompt'].values() if node['class_type'] == 'ImageBatch']
+        self.assertEqual(len(batches), 2)
+        self.assertEqual(result['prompt'][refs['images'][0]]['inputs']['image2'], ['source', 0])
+        self.assertNotIn('media', result['prompt']['7']['inputs'])
+
+    def test_references_require_bindings_and_reject_duplicate_audio_video(self):
+        self.reference_bindings()
+        input_directory = self.root / 'input'
+        input_directory.mkdir()
+        self.registry = Registry(self.root, input_directory=input_directory)
+        for name in ('voice.wav', 'clip.mp4'):
+            (input_directory / name).write_bytes(b'media')
+            row = {'file': name, 'role': 'reference'}
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowAdapterError, 'duplicate'):
+                self.registry.expand(self.media_payload(json.dumps([row, row])))
+        del self.manifest['inputs']['reference_audio']
+        self.write()
+        payload = self.media_payload(reference_audio=['source', 0])
+        payload['prompt']['source'] = {'class_type': 'TestAudio', 'inputs': {}}
+        with self.assertRaisesRegex(WorkflowAdapterError, 'does not support reference_audio'):
+            self.registry.expand(payload)
+
     def test_example_is_valid_and_compiles(self):
         registry = Registry(Path(__file__).resolve().parents[1] / 'example_workflows' / 'adapters')
-        self.assertEqual(registry.validate('empty-video')['id'], 'empty-video')
-        payload = self.payload(workflow_id='empty-video')
-        result = registry.expand(payload)
-        self.assertEqual(result['prompt']['7']['class_type'], 'FreeVideoGenerate')
+        for workflow_id in ('empty-video', 'synthetic-scaled-video'):
+            with self.subTest(workflow_id=workflow_id):
+                metadata = registry.validate(workflow_id)
+                self.assertEqual(metadata['id'], workflow_id)
+                self.assertTrue(metadata['profile']['advanced'])
+                self.assertEqual(metadata['profile']['loras'], [])
+                result = registry.expand(self.payload(workflow_id=workflow_id))
+                self.assertEqual(result['prompt']['7']['class_type'], 'FreeVideoGenerate')
 
 
 if __name__ == '__main__':

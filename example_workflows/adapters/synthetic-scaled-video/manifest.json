@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "synthetic-scaled-video",
+  "title": "Synthetic scaled color video (CPU profile demo)",
+  "inputs": {
+    "width": {"node": "scale", "input": "width", "required": true},
+    "height": {"node": "scale", "input": "height", "required": true},
+    "frames": {"node": "image", "input": "batch_size", "required": true},
+    "first_frame": {"node": "scale", "input": "image"}
+  },
+  "outputs": {"video": {"node": "video", "output": 0}},
+  "profile": {
+    "advanced": [
+      {"id": "color", "label": "Solid frame color (RGB integer)", "type": "integer",
+       "default": 3368652, "min": 0, "max": 16777215, "step": 1,
+       "bindings": [{"node": "image", "input": "color"}]},
+      {"id": "resize_method", "label": "Image resize method", "type": "choice",
+       "default": "bilinear", "options": ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"],
+       "bindings": [{"node": "scale", "input": "upscale_method"}]},
+      {"id": "output_fps", "label": "Output playback FPS", "type": "number",
+       "default": 24, "min": 1, "max": 60, "step": 1,
+       "bindings": [{"node": "video", "input": "fps"}]}
+    ],
+    "loras": []
+  }
+}

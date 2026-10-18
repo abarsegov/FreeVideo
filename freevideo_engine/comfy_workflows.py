@@ -109,7 +109,7 @@ def _embed_metadata(hidden):
 
 
 def save_result(video, *, output_directory, workflow_id, workflow_run_id='', text,
-                width, height, seconds, seed, frames=0, metadata=None, workflow=None):
+                width, height, seconds, seed, frames=0, metadata=None, workflow=None, workflow_settings=None):
     """Save the Comfy VIDEO API object, then commit its library-compatible report.
 
     A VIDEO can carry trims/crops and audio, so its save_to API is authoritative.
@@ -134,6 +134,8 @@ def save_result(video, *, output_directory, workflow_id, workflow_run_id='', tex
                       video={}, encoding={})
         if workflow:
             report['workflow'].update(title=workflow.get('title'), capabilities=workflow.get('capabilities', {}))
+        if workflow_settings is not None:
+            report['workflow']['settings'] = workflow_settings
         serialized = json.dumps(report, ensure_ascii=False, indent=2)
         output.with_suffix('.request.json').write_text(serialized + '\n', encoding='utf-8')
         if metadata is not None:
@@ -147,7 +149,7 @@ def save_result(video, *, output_directory, workflow_id, workflow_run_id='', tex
         raise
 
 
-def finalize(video, *, workflow_id, workflow_run_id='', text, width, height, seconds, seed, frames, hidden):
+def finalize(video, *, workflow_id, workflow_run_id='', text, width, height, seconds, seed, frames, hidden, workflow_settings='{}'):
     from comfy_api.latest import InputImpl, io, ui
     import folder_paths
     from server import PromptServer
@@ -163,7 +165,8 @@ def finalize(video, *, workflow_id, workflow_run_id='', text, width, height, sec
         output, serialized, report = save_result(
             video, output_directory=root, workflow_id=workflow_id, workflow_run_id=workflow_run_id,
             text=text, width=width, height=height, seconds=seconds, seed=seed, frames=frames,
-            metadata=_embed_metadata(hidden), workflow=workflow)
+            metadata=_embed_metadata(hidden), workflow=workflow,
+            workflow_settings=json.loads(workflow_settings or '{}').get(workflow_id, {}))
         preview = ui.PreviewVideo([saved_video(output, root)]).as_dict()
         summary = output_summary(report, output.relative_to(root))
         summary.update(backend='workflow', workflow_id=workflow_id, result_cache_hit=False)

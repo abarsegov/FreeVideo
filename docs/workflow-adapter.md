@@ -40,8 +40,11 @@ match its directory. File and directory links cannot escape that directory/root.
 
 Every binding must target an existing API node and input. Supported canonical
 names are `prompt`, `seed`, `width`, `height`, `seconds`, `frames`, `fps`,
-`first_frame` and `last_frame`. One canonical name binds one input; multiple names
-cannot overwrite the same input. `required` defaults to false. Missing optional
+`first_frame`, `last_frame`, `reference_images`, `reference_audio`, and
+`reference_video`. A canonical name can target several inputs using
+`{"bindings":[{"node":"3","input":"seed"},{"node":"8","input":"noise_seed"}],"required":true}`.
+The original single-target form remains supported. No two canonical or profile
+settings may overwrite the same input. `required` defaults to false. Missing optional
 values retain the template's input. Missing required values produce an actionable
 request error. A zero seed is a valid supplied value.
 
@@ -76,7 +79,17 @@ registry with its trusted ComfyUI input directory; filenames must be relative
 image paths that resolve to existing files inside it. Absolute paths, traversal,
 links escaping input, output/temp annotations and nonimage files are refused.
 ComfyUI validates the installed loader, image contents and IMAGE socket types.
-The adapter must declare each supplied frame binding. Duplicate uploaded,
+Uploaded reference images and connected `reference` through `reference_8` IMAGE
+links combine in row/socket order using core `ImageBatch`; this batch maps to
+`reference_images`. ComfyUI resizes later batches to the first batch's dimensions.
+Uploaded reference audio uses `LoadAudio.audio` and maps to `reference_audio`;
+uploaded reference video uses `LoadVideo.file` and maps to `reference_video`.
+Connected `reference_audio` AUDIO and `reference_video` VIDEO sockets can supply
+those bindings directly. Only one audio and one video reference are allowed.
+The installed graph decides how each reference conditions its model. ComfyUI
+validates loader and socket types. File suffixes identify loader types; all uploads
+require the trusted input-directory/path checks described above.
+The adapter must declare every supplied media binding. Duplicate uploaded,
 connected or direct frames produce an error rather than choosing one silently.
 
 Empty native media and media containing only disabled rows are disconnected
@@ -84,11 +97,14 @@ without executing the provider. Disabled rows retain validated native metadata,
 including optional character IDs, but require no file access. Native media's
 schema has no scalar metadata defaults. Invalid JSON, unknown providers and
 nonempty unknown inputs are refused. Preview, refinement, continuation,
-references (image/video/audio), LoRAs, `early_steps` and native conditioning remain
-unsupported and fail before queueing. Empty native `FreeVideoLoRAStack`
-connections are removed only when the compiler can prove the whole chain empty.
-Native two-pass and sampling controls do not configure the registered graph;
-configure that graph on disk. Studio chain execution is outside this contract.
+`early_steps` and native conditioning remain unsupported and fail before queueing.
+Workflow profiles own LoRAs: native `FreeVideoLoRAStack` connections are detached
+from the workflow owner, preserving independent VDN choices without applying them
+to the registered graph. Profile LoRA controls configure the installed graph.
+Native sampling controls are ignored unless the manifest explicitly binds
+`two_pass`, `base_steps`, `refine_steps`, `step_cache`, or `upscale_factor`;
+profile advanced controls are the preferred visible workflow configuration.
+Studio chain execution is outside this contract.
 
 An empty or null frame-count override follows duration, matching Studio's optional
 widget serialization; other frame-count values must be nonnegative integers.
@@ -102,9 +118,67 @@ a new run. Ordinary native-backend requests are copied without graph changes.
 Registered graphs may not contain `FreeVideoGenerate`, which would recurse.
 
 The Create panel offers **Generation engine** and an installed workflow selector.
-This first version does not route image generation, the agent API or Edit exports
-through adapters. Workflow model/sampling settings remain in the registered API
-graph. Returning to VDN restores its sampling controls.
+This version does not route image generation, the agent API or Edit exports
+through adapters. Workflow model/sampling settings come from the installed
+profile. Returning to VDN restores its independent sampling controls.
+
+## Specialized profile controls
+
+Manifest version 1 optionally declares `profile`. Legacy manifests work unchanged.
+The catalog returns `profile.advanced` and `profile.loras` arrays with their display
+and validation metadata; graph bindings remain private.
+
+```json
+{
+  "profile": {
+    "advanced": [
+      {"id":"steps","label":"Sampling steps","type":"integer","default":20,
+       "min":1,"max":60,"step":1,"bindings":[{"node":"3","input":"steps"}]},
+      {"id":"sampler","label":"Sampler","type":"choice","default":"euler",
+       "options":["euler","heun"],"bindings":[{"node":"3","input":"sampler_name"}]}
+    ],
+    "loras": [
+      {"id":"style","label":"Installed style","min":-2,"max":2,"step":0.05,
+       "bindings":{"name":[{"node":"4","input":"lora_name"}],
+                   "strength":[{"node":"4","input":"strength_model"},
+                               {"node":"4","input":"strength_clip"}]}}
+    ]
+  }
+}
+```
+
+This excerpt illustrates authoring; it does not assert that a model or LoRA is
+installed. Advanced types are `number`, `integer`, `boolean`, `string`, and
+`choice`. Every field needs an ID, label, default, and nonempty bindings array.
+Numeric fields require finite inclusive `min`/`max`; optional `step` is a positive
+UI increment (values need not lie on a step grid). Integer bounds/steps must be
+integers. Choices require unique string `options`. Booleans require JSON booleans;
+integer fields reject booleans/fractional numbers. Strings are limited to 16384
+characters. Each group permits at most 64 controls.
+
+LoRA `bindings.name` and `bindings.strength` are required nonempty arrays. Names
+and default strengths come from installed graph literals; multiple targets must
+agree. Names are read-only. Optional `bindings.enabled` targets literal booleans.
+An optional manifest `enabled` sets the default; otherwise the template enabled
+value is used, or true without an enabled binding. Catalog LoRA items expose
+`id`, `label`, `name`, `strength`, `enabled`, `min`, `max`, and `step`. Default
+strength bounds are -20 through 20 and the default step is 0.05. Disabling writes
+zero to strength bindings and false to any enabled bindings. Enabling restores
+the selected/default strength. Clients never insert loader nodes or model names.
+
+`FreeVideoGenerate.workflow_settings` is a JSON string storing independent maps:
+
+```json
+{"my-video":{"advanced":{"steps":28,"sampler":"heun"},"loras":{"style":{"strength":0.6,"enabled":true}}}}
+```
+
+Omitted settings initialize from installed profile defaults. The selected workflow
+rejects unknown IDs/keys, invalid types, nonfinite numbers, and out-of-range values
+before queueing. Other workflow entries stay isolated, allowing switching without
+losing settings. Clients never provide node IDs, bindings, executable graphs, or
+LoRA names. Settings JSON is limited to 256 KiB. Stale settings referring to a
+removed selected-profile field produce an explicit error; reset that workflow's
+settings to use its updated defaults.
 
 ## Pure compiler API and example
 
@@ -123,7 +197,7 @@ uploaded media receives a configuration error.
 
 Catalog metadata exposes `id`, `title`, supported input names and capabilities
 (`single_shot`, `preview`, `refine`, `continuation`), without executable graph
-contents. Missing registry roots catalog as empty. Invalid installed adapters
+contents or profile bindings. Missing registry roots catalog as empty. Invalid installed adapters
 raise `WorkflowAdapterError` with their ID rather than appearing runnable.
 
 `example_workflows/adapters/empty-video` is a synthetic smoke test using core
@@ -131,6 +205,11 @@ raise `WorkflowAdapterError` with their ID rather than appearing runnable.
 to register it. It generates black frames and ignores the text prompt; it is not
 a generative model. Its optional first-frame binding replaces the black image
 batch, so an attached image batch determines output length in that mode.
+Its profile exposes a solid RGB color integer. The second CPU-only example,
+`synthetic-scaled-video`, exposes solid color, image resize method, and playback
+FPS using core `EmptyImage` → `ImageScale` → `CreateVideo`. Its frame count still
+uses duration at 24 fps; changing playback FPS changes playback duration. Both
+are synthetic demonstrations with empty LoRA lists and no generative models.
 
 Run the compiler checks without ComfyUI or models:
 

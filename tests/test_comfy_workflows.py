@@ -272,9 +272,18 @@ class NodeTests(unittest.TestCase):
     def test_backend_schema_appended_after_existing_widgets(self):
         schema = self.nodes.FreeVideoGenerate.define_schema()
         names = [row.id for row in schema.inputs]
-        self.assertEqual(names[-5:], ['backend', 'workflow_id', 'workflow_result', 'workflow_run_id', 'workflow_error'])
-        self.assertEqual(schema.inputs[-5].options['default'], 'vdn')
-        self.assertTrue(schema.inputs[-3].options['lazy'])
+        self.assertEqual(names[-6:], ['backend', 'workflow_id', 'workflow_result', 'workflow_run_id', 'workflow_error', 'workflow_settings'])
+        self.assertEqual(schema.inputs[-6].options['default'], 'vdn')
+        self.assertTrue(schema.inputs[-4].options['lazy'])
+
+    def test_h3_reference_batch_preserves_all_pictures_and_empty_sockets(self):
+        result = self.nodes.FreeVideoH3ReferenceImages.execute(['picture-1', 'picture-2']).result
+        self.assertEqual(result[:2], (['picture-1'], ['picture-2']))
+        self.assertEqual(result[2:], (None,) * 7)
+        self.assertEqual(len(self.nodes.FreeVideoH3ReferenceImages.define_schema().outputs), 9)
+        for batch in ([], list(range(10))):
+            with self.assertRaisesRegex(ValueError, '1 and 9'):
+                self.nodes.FreeVideoH3ReferenceImages.execute(batch)
 
 
 if __name__ == '__main__':

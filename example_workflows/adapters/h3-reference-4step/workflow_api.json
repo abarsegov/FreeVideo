@@ -1,0 +1,244 @@
+{
+  "model": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "attention": {
+    "class_type": "ModelAttentionBackend",
+    "inputs": {
+      "model": [
+        "model",
+        0
+      ],
+      "attention": "comfy kitchen attention"
+    }
+  },
+  "turbo": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "attention",
+        0
+      ],
+      "lora_name": "H3\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "text_encoder": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "video_vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    }
+  },
+  "audio_vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "references": {
+    "class_type": "FreeVideoH3ReferenceImages",
+    "inputs": {
+      "images": null
+    }
+  },
+  "frame_count": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "max(5, a) + (5 - (max(5, a) % 17)) % 17",
+      "values.a": 124
+    }
+  },
+  "h3": {
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "inputs": {
+      "clip": [
+        "text_encoder",
+        0
+      ],
+      "vae": [
+        "video_vae",
+        0
+      ],
+      "audio_vae": [
+        "audio_vae",
+        0
+      ],
+      "prompt": "Use <Picture 1> as the visual identity reference. A cinematic medium shot with a slow camera push-in, natural motion, and synchronized environmental sound.",
+      "width": 768,
+      "height": 1344,
+      "length": [
+        "frame_count",
+        1
+      ],
+      "ref_image_size": "match",
+      "ref_audios.ref_audio_0": null,
+      "ref_images.ref_image_0": [
+        "references",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "references",
+        1
+      ],
+      "ref_images.ref_image_2": [
+        "references",
+        2
+      ],
+      "ref_images.ref_image_3": [
+        "references",
+        3
+      ],
+      "ref_images.ref_image_4": [
+        "references",
+        4
+      ],
+      "ref_images.ref_image_5": [
+        "references",
+        5
+      ],
+      "ref_images.ref_image_6": [
+        "references",
+        6
+      ],
+      "ref_images.ref_image_7": [
+        "references",
+        7
+      ],
+      "ref_images.ref_image_8": [
+        "references",
+        8
+      ]
+    }
+  },
+  "negative": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "h3",
+        0
+      ]
+    }
+  },
+  "noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    }
+  },
+  "guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": [
+        "turbo",
+        0
+      ],
+      "positive": [
+        "h3",
+        0
+      ],
+      "negative": [
+        "negative",
+        0
+      ],
+      "cfg": 1.0
+    }
+  },
+  "scheduler": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "turbo",
+        0
+      ],
+      "scheduler": "beta",
+      "steps": 4,
+      "denoise": 1.0
+    }
+  },
+  "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "sample": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "noise",
+        0
+      ],
+      "guider": [
+        "guider",
+        0
+      ],
+      "sampler": [
+        "sampler",
+        0
+      ],
+      "sigmas": [
+        "scheduler",
+        0
+      ],
+      "latent_image": [
+        "h3",
+        1
+      ]
+    }
+  },
+  "decode_video": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "sample",
+        0
+      ],
+      "vae": [
+        "video_vae",
+        0
+      ]
+    }
+  },
+  "decode_audio": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "sample",
+        0
+      ],
+      "vae": [
+        "audio_vae",
+        0
+      ]
+    }
+  },
+  "video": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "decode_video",
+        0
+      ],
+      "audio": [
+        "decode_audio",
+        0
+      ],
+      "fps": 24.0,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "codec": "none"
+    }
+  }
+}

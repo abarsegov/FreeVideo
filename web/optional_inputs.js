@@ -36,7 +36,8 @@ export function optionalInputValue(name, value) {
 export function cleanOptionalWidgets(node) {
     for (const widget of node?.widgets || []) {
         if (!(widget.name in DEFAULTS)) continue;
-        const value = optionalInputValue(widget.name, widget.value);
+        const workflowFrames = widget.name === 'frames' && node.widgets?.find(w => w.name === 'backend')?.value === 'workflow';
+        const value = workflowFrames ? (Number.isSafeInteger(widget.value) && widget.value >= 0 ? widget.value : 0) : optionalInputValue(widget.name, widget.value);
         if (value !== widget.value) widget.value = value;
     }
 }
@@ -45,6 +46,10 @@ export function cleanOptionalPrompt(prompt) {
     for (const entry of Object.values(prompt?.output || {})) {
         if (entry?.class_type !== 'FreeVideoGenerate' || !entry.inputs) continue;
         for (const name of Object.keys(DEFAULTS)) {
+            if (name === 'frames' && entry.inputs.backend === 'workflow') {
+                entry.inputs.frames = Number.isSafeInteger(entry.inputs.frames) && entry.inputs.frames >= 0 ? entry.inputs.frames : 0;
+                continue;
+            }
             if (name in entry.inputs) entry.inputs[name] = optionalInputValue(name, entry.inputs[name]);
         }
     }

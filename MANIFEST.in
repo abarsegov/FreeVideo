@@ -2,7 +2,7 @@ include setup.sh test.sh freevideo LICENSE .gitignore .gitattributes .editorconf
 include setup.ps1 test.ps1 freevideo.ps1 setup.cmd test.cmd freevideo.cmd
 include __init__.py README.zh-CN.md
 include NOTICE THIRD_PARTY_NOTICES.md CONTRIBUTING.md SECURITY.md CITATION.cff
-recursive-include example_workflows *.json
+recursive-include example_workflows *.json *.md
 recursive-include web *.js *.css
 include web/vendor/three/LICENSE
 recursive-include web/assets *.svg *.png *.webp

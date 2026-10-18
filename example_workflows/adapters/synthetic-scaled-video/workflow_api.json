@@ -1,0 +1,14 @@
+{
+  "image": {
+    "class_type": "EmptyImage",
+    "inputs": {"width": 64, "height": 64, "batch_size": 24, "color": 3368652}
+  },
+  "scale": {
+    "class_type": "ImageScale",
+    "inputs": {"image": ["image", 0], "upscale_method": "bilinear", "width": 512, "height": 512, "crop": "disabled"}
+  },
+  "video": {
+    "class_type": "CreateVideo",
+    "inputs": {"images": ["scale", 0], "fps": 24}
+  }
+}

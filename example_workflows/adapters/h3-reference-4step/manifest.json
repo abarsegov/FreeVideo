@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "id": "h3-reference-4step",
+  "title": "H3 reference-to-video (native 4-step)",
+  "inputs": {
+    "prompt": {
+      "node": "h3",
+      "input": "prompt"
+    },
+    "seed": {
+      "node": "noise",
+      "input": "noise_seed"
+    },
+    "width": {
+      "node": "h3",
+      "input": "width"
+    },
+    "height": {
+      "node": "h3",
+      "input": "height"
+    },
+    "frames": {
+      "node": "frame_count",
+      "input": "values.a"
+    },
+    "fps": {
+      "node": "video",
+      "input": "fps"
+    },
+    "reference_images": {
+      "node": "references",
+      "input": "images",
+      "required": true
+    },
+    "reference_audio": {
+      "node": "h3",
+      "input": "ref_audios.ref_audio_0"
+    }
+  },
+  "outputs": {
+    "video": {
+      "node": "video",
+      "output": 0,
+      "type": "VIDEO"
+    }
+  },
+  "profile": {
+    "advanced": [
+      {
+        "id": "steps",
+        "label": "Sampling steps",
+        "type": "integer",
+        "default": 4,
+        "min": 1,
+        "max": 100,
+        "step": 1,
+        "bindings": [
+          {
+            "node": "scheduler",
+            "input": "steps"
+          }
+        ]
+      },
+      {
+        "id": "cfg",
+        "label": "CFG",
+        "type": "number",
+        "default": 1.0,
+        "min": 0,
+        "max": 20,
+        "step": 0.1,
+        "bindings": [
+          {
+            "node": "guider",
+            "input": "cfg"
+          }
+        ]
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "type": "choice",
+        "default": "beta",
+        "options": [
+          "beta",
+          "normal",
+          "simple",
+          "karras",
+          "sgm_uniform",
+          "exponential",
+          "ddim_uniform",
+          "linear_quadratic",
+          "kl_optimal"
+        ],
+        "bindings": [
+          {
+            "node": "scheduler",
+            "input": "scheduler"
+          }
+        ]
+      },
+      {
+        "id": "sampler",
+        "label": "Sampler",
+        "type": "choice",
+        "default": "euler",
+        "options": [
+          "euler",
+          "res_multistep",
+          "heun"
+        ],
+        "bindings": [
+          {
+            "node": "sampler",
+            "input": "sampler_name"
+          }
+        ]
+      },
+      {
+        "id": "denoise",
+        "label": "Denoise",
+        "type": "number",
+        "default": 1.0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+        "bindings": [
+          {
+            "node": "scheduler",
+            "input": "denoise"
+          }
+        ]
+      },
+      {
+        "id": "reference_size",
+        "label": "Reference image size",
+        "type": "choice",
+        "default": "match",
+        "options": [
+          "match",
+          "max"
+        ],
+        "bindings": [
+          {
+            "node": "h3",
+            "input": "ref_image_size"
+          }
+        ]
+      },
+      {
+        "id": "attention",
+        "label": "Attention backend",
+        "type": "choice",
+        "default": "comfy kitchen attention",
+        "options": [
+          "pytorch attention",
+          "comfy kitchen attention"
+        ],
+        "bindings": [
+          {
+            "node": "attention",
+            "input": "attention"
+          }
+        ]
+      }
+    ],
+    "loras": [
+      {
+        "id": "ref2v_turbo",
+        "label": "H3 ref2v turbo 4-step v0.1",
+        "min": 0,
+        "max": 2,
+        "step": 0.05,
+        "enabled": true,
+        "bindings": {
+          "name": [
+            {
+              "node": "turbo",
+              "input": "lora_name"
+            }
+          ],
+          "strength": [
+            {
+              "node": "turbo",
+              "input": "strength_model"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
