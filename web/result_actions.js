@@ -3,6 +3,7 @@ import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { canExtend, extendText, extendSourceExists } from './studio_extend.js';
 import { issueButton } from './issue_button.js';
+import { proresAction } from './prores_export.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./result_actions.css', import.meta.url).href; document.head.append(css);
@@ -142,6 +143,8 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
         const download = action('a', t('Download video', '下载视频'), 'download', secondPass ? 'fv-action-secondary' : 'fv-action-primary');
         download.href = outputDownloadURL(api, record.video); download.download = '';
         bar.append(download);
+        const prores = proresAction(record, t, api);
+        if (prores) bar.append(prores);
     }
     if (extend && canExtend(record)) {
         const button = action('button', extendText(t, 'action'), 'extend', 'fv-action-secondary fv-action-extend');
