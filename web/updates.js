@@ -1,5 +1,6 @@
 import { api } from '../../scripts/api.js';
 import { setLauncherPresent } from './repair_hint.js';
+import { issueButton } from './issue_button.js';
 
 // Every platform downloads from one release: the latest vX.Y.Z.
 const releasePage = 'https://github.com/FlashML-org/FreeVideo/releases/latest';
@@ -116,6 +117,7 @@ export function createUpdateNotice(cn) {
     const element = document.createElement('aside'); element.className = 'fv-update-notice';
     element.hidden = true; element.setAttribute('role', 'status');
     const label = document.createElement('span');
+    let problem;
     const summary = document.createElement('small'); summary.className = 'fv-update-summary';
     const details = document.createElement('button'); details.type = 'button';
     details.textContent = t("What's new", '更新内容');
@@ -178,6 +180,12 @@ export function createUpdateNotice(cn) {
         element.hidden = !text;
         element.classList.toggle('fv-update-working', busy);
         label.textContent = text;
+        const failed = failure === 'cancel' || failure === 'launcher' && !busy && phase !== 'review'
+            || actions && launcher?.status === 'error' && !!launcher.error;
+        if (failed) {
+            problem ||= issueButton(t, () => ({where: ['Update FreeVideo', '更新 FreeVideo'], message: label.textContent}));
+            element.append(problem);
+        } else problem?.remove();
         const skipped = actions ? earlierNotes(candidate, productVersion()).length : 0;
         summary.textContent = actions ? (localizedNotes(candidate, cn)?.summary || '')
             + (skipped ? ' ' + t(`Includes the changes of ${skipped} earlier version${skipped > 1 ? 's' : ''}.`, `另含此前 ${skipped} 个版本的更新。`) : '') : '';
@@ -233,7 +241,11 @@ function showReleaseNotes(cn) {
             }
             body.append(section);
         }
-        if (!body.childElementCount) body.textContent = t('Version information is not available yet.', '暂时无法获取版本信息。');
+        if (!body.childElementCount) {
+            const message = t('Version information is not available yet.', '暂时无法获取版本信息。');
+            body.textContent = message;
+            body.append(issueButton(t, () => ({where: ['Version information', '版本信息'], message})));
+        }
     };
     const dispose = () => { listeners.delete(render); dialog.remove(); };
     dialog.addEventListener('close', dispose, {once: true});

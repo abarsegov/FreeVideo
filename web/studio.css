@@ -134,6 +134,7 @@
 .fv-studio .fv-queue-chip{flex:none;color:var(--fv-accent)}
 .fv-studio .fv-queue-item button{flex:none}
 .fv-studio .fv-status{min-height:22px;text-align:center;font-size:var(--fv-micro);color:var(--fv-muted);overflow-wrap:anywhere}.fv-studio .fv-status[data-error=true]{color:var(--fv-danger)}
+.fv-studio .fv-status>.fv-issue-button{display:flex;margin:8px auto 0}
 .fv-studio .fv-progress{width:100%;height:4px;accent-color:var(--fv-accent);border:0;margin:0 0 10px}.fv-studio .fv-budget,.fv-studio .fv-prewarm{text-align:center;font-size:var(--fv-micro);color:var(--fv-muted)}
 .fv-studio .fv-panel{height:auto;padding:0;border:none;border-radius:0;background:transparent;color:var(--fv-ink);font-size:var(--fv-micro);overflow:visible}
 .fv-studio .fv-panel .fv-toolbar{justify-content:flex-start}.fv-studio .fv-panel .fv-note{font-size:var(--fv-micro);margin:8px 0;text-align:left}

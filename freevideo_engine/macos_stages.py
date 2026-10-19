@@ -49,6 +49,10 @@ def memory_exhausted(stage, observed):
 def joined_admission(engine, value):
     """Decide in the GPU worker, using its enforced cap and validated packed rows."""
     mode = sampling_lifetime(value['resources'])
+    if value.get('continuation') is not None:
+        # Context encoding and its VAE never share weights with sampling. Keep
+        # joined residency off until its continuation workspace is calibrated.
+        return dict(selected=False, mode=mode, reason='continuation-separate-stages')
     if mode == 'phase' or not value['sampling']['enabled']:
         return dict(selected=False, mode=mode, reason='separate-or-single-pass')
     task = value.get('task', 't2va')
@@ -250,6 +254,9 @@ def run(value):
                 elif stage == 'upscale':
                     result['latent_upscale'] = observed['upscale']
                 else:
+                    for key in ('continuation', 'continuation_store', 'first_frame_kept', 'first_sound_kept'):
+                        if key in observed:
+                            result[key] = observed[key]
                     result['decode'] = observed['decode']
                     result['decode_save_seconds'] = observed['work_seconds']
                 # Keep completed work visible if a later stage fails or the
@@ -325,6 +332,50 @@ def worker(value):
     started = time.monotonic()
     try:
         sampling_lifetime(resource)
+        from . import continuation as chain
+        from .macos_continuation import storage_failure
+        hidden = chain.validate_hide_tail(value.get('hide_tail_frames', 0))
+        continuation = value.get('continuation')
+        if continuation is not None:
+            chain.validate_route(task=value.get('task', 't2va'), backend='mps',
+                anchor=bool(continuation.get('anchor')),
+                sound=bool(continuation.get('sound')),
+                media=dict(references=[
+                    *([dict(kind='image')] if continuation.get('anchor') else []),
+                    *([continuation['sound']] if continuation.get('sound') else [])]),
+                two_pass=bool(sampling.get('requested')), preview=value.get('preview', False),
+                refine_from=value.get('refine_from'))
+            continuation = dict(continuation, audio_context=chain.validate_audio_context(
+                continuation.get('audio_context', chain.AUDIO_CONTEXT_DEFAULT)))
+            if 'tail' in continuation:
+                completed = artifacts / 'continuation-completed.json'
+                if completed.is_file():
+                    continuation = json.loads(completed.read_text(encoding='utf-8'))
+                elif phase in ('first-pass', 'refinement'):
+                    from .macos_vdn import activate
+                    from .backends import get_backend
+                    from .continuation_tail import complete
+                    activate()
+                    backend = get_backend('mps')
+                    result['continuation_encode_policy'] = backend.configure_budget(
+                        resource['allocator_capacity_bytes'], reserve_bytes=resource['reserve_bytes'])
+                    manifest = json.loads((Path(value['cache']) / 'manifest.json').read_text(encoding='utf-8'))
+                    continuation, result['continuation_encode'] = complete(
+                        continuation, value['canvas'], manifest, sampling, device='mps')
+                    save(completed, continuation)
+                else:
+                    raise ValueError('Continuation encoding did not complete before this stage')
+            result['continuation'] = chain.summary(continuation, hide_tail_frames=hidden)
+            result['audio_context'] = continuation['audio_context']
+        continuable = bool(sampling.get('enabled') or sampling.get('requested')) and not value.get('preview')
+        first_tail = None
+        def capture_first(video):
+            nonlocal first_tail
+            if continuable:
+                try:
+                    first_tail = chain.tail(video, hide_tail_frames=hidden)
+                except Exception as error:
+                    storage_failure(error, result)
         if phase in ('first-pass', 'refinement'):
             from .macos_runtime import Engine
             from . import frame_preview
@@ -355,7 +406,9 @@ def worker(value):
                         attention_batch_bytes=compute.get('attention_batch_bytes', 1 << 29),
                         plan_compute=bool(compute), memory_retry=retry and bool(compute),
                         task=value.get('task', 't2va'), canvas=value['canvas'],
-                        step_cache=None if refining else value.get('step_cache')) as engine:
+                        step_cache=None if refining else value.get('step_cache'),
+                        **(dict(adaln_task=chain.ANCHOR_ADALN_TASK if continuation.get('anchor') else chain.ADALN_TASK)
+                           if continuation is not None else {})) as engine:
                 result['load_seconds'] = engine.load_seconds
                 tick = time.monotonic()
                 # A preview stops after the first pass; joining would also refine.
@@ -370,7 +423,9 @@ def worker(value):
                         save(Path(value['report']), result)
                     def first_saved(video, audio, metrics):
                         save_started = time.monotonic()
-                        torch.save(dict(video=video, audio=audio), artifacts / 'first-pass.pt')
+                        capture_first(video)
+                        torch.save(dict(video=video, audio=audio, **(
+                            dict(continuation_first=first_tail) if first_tail is not None else {})), artifacts / 'first-pass.pt')
                         save(artifacts / 'first-pass.json', metrics)
                         result['latent_save_seconds'] += time.monotonic() - save_started
                         result['sampling_passes'] = list(metrics['sampling_passes'])
@@ -381,7 +436,8 @@ def worker(value):
                         frames=value['canvas']['frames'], two_pass=True, refine_steps=sampling['refine_steps'],
                         reuse_weights=True, refinement_resident_bytes=admission['refinement_resident_bytes'],
                         first_pass_saved=first_saved, phase_changed=changed,
-                        staged=sampling.get('staged', False), scale=sampling.get('scale', 2))
+                        staged=sampling.get('staged', False), scale=sampling.get('scale', 2),
+                        **(dict(continuation=continuation) if continuation is not None else {}))
                     result.update(sampling_passes=measured['sampling_passes'],
                         shared_sampling_residency=measured['shared_sampling_residency'],
                         latent_upscale=measured['latent_upscale'], sampling_phase='latent-save')
@@ -391,6 +447,8 @@ def worker(value):
                     video, audio, measured = engine.sample(value['conditioning'],
                         value['seed'] + (sampling['restart_seed_offset'] if refining else 0),
                         **sampling['second' if refining else 'first'],
+                        **(dict(continuation=chain.load(continuation, 'final' if refining else 'first'))
+                           if continuation is not None else {}),
                         progress_total=sampling['base_steps'] if value.get('preview') is True else sampling['total_steps'],
                         progress_offset=sampling['base_steps'] if refining else 0,
                         **(dict(initial_latents=(initial['video'], initial['audio']), refine_steps=sampling['refine_steps'],
@@ -401,6 +459,10 @@ def worker(value):
                     if measured.get('compute') is not None:
                         result.update(initial_compute=compute, compute=measured['compute'])
                     result.update(sampling=measured, work_seconds=time.monotonic() - tick)
+            if refining:
+                first_tail = initial.get('continuation_first')
+            elif not result.get('joined_sampling'):
+                capture_first(video)
             name = ('first-pass.pt' if not refining and sampling['enabled']
                     and not result.get('joined_sampling') else 'latents.pt')
         elif phase == 'upscale':
@@ -414,6 +476,7 @@ def worker(value):
             initial = torch.load(artifacts / 'first-pass.pt', map_location='cpu', weights_only=True)
             video, stats = upscale_latents(initial['video'], sampling, value['base'], backend)
             audio = initial['audio']
+            first_tail = initial.get('continuation_first')
             result.update(upscale=stats, work_seconds=stats['stage_seconds'])
             name = 'upscaled.pt'
         elif phase == 'decode':
@@ -422,10 +485,23 @@ def worker(value):
             source = 'first-pass.pt' if value.get('preview') is True else 'latents.pt'
             initial = torch.load(artifacts / source, map_location='cpu', weights_only=True)
             tick = time.monotonic()
+            data = initial.get('continuation_tail')
+            def keep_audio_lead_in(lead):
+                if lead is not None and data is not None:
+                    data['audio_lead_in'] = lead
+                    data['metadata']['source_id'] = continuation['source_id']
             result['decode'] = decode_to_file(initial['video'], initial['audio'], value['output'],
                 base=value['base'], artifacts_dir=artifacts,
                 budget_bytes=resource['allocator_capacity_bytes'], reserve_bytes=resource['reserve_bytes'],
-                output_size=value.get('output_size'))
+                output_size=value.get('output_size'),
+                **(dict(continuation=continuation, audio_lead_in_callback=keep_audio_lead_in)
+                   if continuation is not None else {}),
+                **(dict(hide_tail_frames=hidden) if hidden else {}))
+            if continuable and data is not None:
+                from .macos_continuation import store
+                store(value['output'], data, continuation, result)
+            elif continuable:
+                result['continuation_store'] = dict(saved=False, reason='checkpoint_missing')
             result.update(work_seconds=time.monotonic() - tick, success=True)
             return
         else:
@@ -433,7 +509,18 @@ def worker(value):
         if not bool(video.isfinite().all()) or not bool(audio.isfinite().all()):
             raise ValueError('Native stage produced nonfinite latents')
         tick = time.monotonic()
-        torch.save(dict(video=video, audio=audio), artifacts / name)
+        saved = dict(video=video, audio=audio)
+        if first_tail is not None:
+            if name in ('first-pass.pt', 'upscaled.pt'):
+                saved['continuation_first'] = first_tail
+            elif continuable:
+                try:
+                    manifest = json.loads((Path(value['cache']) / 'manifest.json').read_text(encoding='utf-8'))
+                    saved['continuation_tail'] = chain.tail_data(first_tail, video, audio, value['canvas'],
+                        sampling, manifest, continuation, hide_tail_frames=hidden)
+                except Exception as error:
+                    storage_failure(error, result)
+        torch.save(saved, artifacts / name)
         result.update(latent_save_seconds=result.get('latent_save_seconds', 0.) + time.monotonic() - tick,
                       success=True)
     except BaseException as error:

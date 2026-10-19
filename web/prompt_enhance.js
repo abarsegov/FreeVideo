@@ -70,7 +70,7 @@ export function promptPrestart(api, nodeId, enabled, alive = () => true) {
 // An empty box is never rewritten, the untouched starter prompt included:
 // enhancement waits for the user's own scene.
 // `prepare` turns the user's text into what the model reads (character mentions written out with their pictures).
-export function createPromptEnhancer({node, input, editor, api, context, setText, t, starter = '', prepare = text => text, onReport = () => {}, onChange = () => {}}) {
+export function createPromptEnhancer({node, input, editor, api, context, setText, t, starter = '', prepare = text => text, onReport = () => {}, onChange = () => {}, issueButton = null}) {
     const saved = node.properties?.freevideo_prompt_versions;
     // Drafts saved before the starter became a placeholder hold it as the original.
     const versions = new PromptVersions(starter && saved?.original === starter ? {...saved, original: ''} : saved, input.value);
@@ -96,11 +96,15 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     const statusText = el('span', null, 'fv-enhance-status-text');
     const meter = el('div', null, 'fv-enhance-meter'), fill = el('i');
     meter.setAttribute('role', 'progressbar'); meter.setAttribute('aria-valuemin', '0'); meter.setAttribute('aria-valuemax', '100');
-    meter.append(fill); status.append(statusText, meter);
+    // The shared "Report a problem" button, handed in by the page (this file loads without imports).
+    const report = issueButton ? issueButton(t, () => ({where: ['Prompt enhancement', '提示词增强'], message: statusText.textContent})) : document.createElement('span');
+    report.hidden = true;
+    meter.append(fill); status.append(statusText, meter, report);
     // One place sets what the status line says and how it looks.
     function show(text, state = '', fraction = null) {
         statusText.textContent = text || '';
         status.dataset.state = text ? state : '';
+        report.hidden = !text || state !== 'error';
         meter.hidden = state !== 'progress';
         meter.dataset.indeterminate = String(fraction === null);
         if (fraction === null) { meter.removeAttribute('aria-valuenow'); fill.style.width = ''; }

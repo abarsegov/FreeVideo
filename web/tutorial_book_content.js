@@ -33,8 +33,8 @@ export const TUTORIAL_CHAPTERS = [
             en: ['Enter a longer duration. It is made in parts automatically. "Available sizes and lengths" shows how long each size can be and about how long it takes.', 'Choose "Generate video".', 'Choose "Extend" on a finished video to continue it.', 'Parts can also be added one by one in "Edit".'],
         },
         limits: {
-            zh: ['一条视频最多 5 段，创作面板中时长最长 60 秒。', '分段生成和接着生成需要 NVIDIA 显卡，不支持 Mac。', '段数越多，衔接处越容易出现变化；适合切换镜头处，可直接开始新的一段。'],
-            en: ['A video has at most 5 parts, and the creation panel accepts up to 60 seconds.', 'Generating in parts and Extend need an NVIDIA graphics card and are not available on Mac.', 'The more parts are joined, the more the joins may change. Where a cut fits, cut to a new shot and start a fresh part.'],
+            zh: ['一条视频最多 5 段，创作面板中时长最长 60 秒。', '分段生成和接着生成需要 NVIDIA 显卡或 Mac。', '段数越多，衔接处越容易出现变化；适合切换镜头处，可直接开始新的一段。'],
+            en: ['A video has at most 5 parts, and the creation panel accepts up to 60 seconds.', 'Generating in parts and Extend need an NVIDIA graphics card or a Mac.', 'The more parts are joined, the more the joins may change. Where a cut fits, cut to a new shot and start a fresh part.'],
         },
     },
     {
@@ -51,8 +51,8 @@ export const TUTORIAL_CHAPTERS = [
             en: ['Select the part to continue.', 'Click + next to the prompt to upload or generate images, up to 3.', 'Describe it, then choose "Generate".'],
         },
         limits: {
-            zh: ['接续生成最多使用 3 张参考图，不使用首帧和尾帧。', '剪辑视图只能添加图片；参考视频和音频在创作面板的“素材”中添加。', '同样最多 5 段，需要 NVIDIA 显卡，不支持 Mac。'],
-            en: ['A part that continues the previous one uses up to 3 reference images and no first or last frames.', 'Edit takes images only. Add reference videos and audio under "Media" in the creation panel.', 'The same 5-part limit applies, and an NVIDIA graphics card is required. Not available on Mac.'],
+            zh: ['接续生成最多使用 3 张参考图，不使用首帧和尾帧。', '剪辑视图只能添加图片；参考视频和音频在创作面板的“素材”中添加。', '同样最多 5 段，需要 NVIDIA 显卡或 Mac。'],
+            en: ['A part that continues the previous one uses up to 3 reference images and no first or last frames.', 'Edit takes images only. Add reference videos and audio under "Media" in the creation panel.', 'The same 5-part limit applies, and an NVIDIA graphics card or a Mac is required.'],
         },
     },
 ];

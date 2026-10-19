@@ -291,6 +291,15 @@ def create_ui(session, *, show=True):
             else:
                 self.invoke(open_browser, value)
 
+        @Slot(str, str)
+        def reportProblem(self, error, title):
+            from . import __version__
+            from .launcher_issue import issue_url
+            from .windows_ux import open_browser
+            url = issue_url(error, session.installed_product_version() or __version__, title,
+                            zh=session.language.startswith('zh'))
+            self.invoke(open_browser, url)
+
         @Slot()
         def openDownloadFolder(self):
             from PySide6.QtGui import QDesktopServices

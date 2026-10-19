@@ -14,7 +14,7 @@ from pathlib import Path
 import torch
 
 from . import image_policy
-from .image_stream import StreamedStack
+from .image_stream import ResidentStack, StreamedStack
 
 GiB = 2**30
 _DIT_FILE = 'diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors'
@@ -58,6 +58,11 @@ def _non_block_children(module, skip):
             yield child
 
 
+def _kept(plan):
+    kept = getattr(plan, 'dit_kept_layers', None)
+    return plan.dit_resident_layers if kept is None else kept
+
+
 class _Placement:
     """Stage hooks for QwenImageGenerator: nothing but moves between host and card."""
 
@@ -66,7 +71,9 @@ class _Placement:
 
     def enter(self, stage):
         runner = self.runner
-        if stage == 'text':
+        if stage == 'denoise':
+            runner.dit_stack.set_resident(runner.last_plan.dit_resident_layers)
+        elif stage == 'text':
             visual = getattr(runner.text_model.model, 'visual', None)
             if visual is not None:
                 visual.to(runner.device)
@@ -84,6 +91,10 @@ class _Placement:
             runner.vae.to('cpu')
             self._trim()
         elif stage == 'denoise':
+            # Blocks the other stages have no room for go back; the next denoise fills them again.
+            # A pass that failed between layers is left as it is (the runner is not reused).
+            if runner.dit_stack.offloader.at_boundary:
+                runner.dit_stack.set_resident(_kept(runner.last_plan))
             self._trim()
 
     @staticmethod
@@ -100,7 +111,12 @@ class ImageRunner:
     ``gpu_budget_bytes`` caps what a request may plan against (None reads the
     card: free memory plus what this process already holds). Residency and VAE
     tiling are chosen per request by ``image_policy.plan_image``.
+
+    ``full_card`` is set when the whole model sits on the card with no host copy; the first request
+    that no longer plans everything resident puts the weights back on the host and streams them.
     """
+
+    full_card = False
 
     def __init__(self, pack_dir, *, device='cuda', gpu_budget_bytes=None, log=None, progress=None):
         from .qwen_pipeline import QwenImageGenerator
@@ -119,7 +135,9 @@ class ImageRunner:
 
         loading = _LoadProgress(progress or (lambda stage, fraction: None))
         started = time.monotonic()
-        self.transformer = load_dit(self.pack_dir / _DIT_FILE, device='cpu',
+        # A card that holds every weight plus a request's working memory keeps no host copy.
+        self.full_card = self._fits_whole_model()
+        self.transformer = load_dit(self.pack_dir / _DIT_FILE, device=self.device if self.full_card else 'cpu',
                                     progress=lambda done, total: loading.report('dit', done, total))
         self.load_seconds['dit'] = time.monotonic() - started
         loading.complete('dit')
@@ -156,7 +174,8 @@ class ImageRunner:
         from ..offload import cpu_weights
         stacks = [self.transformer.transformer_blocks, language.layers]
         stack_bytes = [sum(value.numel() * value.element_size() for layer in layers
-                           for _, value in cpu_weights(layer)) for layers in stacks]
+                           for _, value in (list(layer.named_parameters()) + list(layer.named_buffers())
+                                            if self.full_card else cpu_weights(layer))) for layers in stacks]
         pin_total = sum(stack_bytes)
 
         def pin_progress(index):
@@ -164,16 +183,25 @@ class ImageRunner:
             return lambda done, total: loading.report(
                 'pin', offset + stack_bytes[index] * (done / total if total else 0.), pin_total)
 
-        with torch.no_grad():   # LayerOffloader refuses to be built with autograd on
-            self.dit_stack = StreamedStack(stacks[0], name='dit', device=self.device, progress=pin_progress(0))
-            loading.report('pin', stack_bytes[0], pin_total)
-            self.te_stack = StreamedStack(stacks[1], name='text_encoder', device=self.device, progress=pin_progress(1))
+        if self.full_card:
+            # Move the encoder layers over one at a time so the host copy is freed as it goes.
+            for layer in stacks[1]:
+                layer.to(self.device)
+            self.dit_stack = ResidentStack(stacks[0], name='dit', device=self.device)
+            self.te_stack = ResidentStack(stacks[1], name='text_encoder', device=self.device)
+        else:
+            with torch.no_grad():   # LayerOffloader refuses to be built with autograd on
+                self.dit_stack = StreamedStack(stacks[0], name='dit', device=self.device,
+                                               progress=pin_progress(0))
+                loading.report('pin', stack_bytes[0], pin_total)
+                self.te_stack = StreamedStack(stacks[1], name='text_encoder', device=self.device,
+                                              progress=pin_progress(1))
         self.load_seconds['pin'] = time.monotonic() - started
         loading.complete('pin')
 
         self.shape = image_policy.ImageShape.measure(
             list(self.transformer.transformer_blocks), list(language.layers),
-            total_weight_bytes=self.dit_stack.host_bytes + self.te_stack.host_bytes)
+            total_weight_bytes=sum(stack_bytes))
         self.generator = QwenImageGenerator(
             None, placement=_Placement(self), device=self.device, transformer=self.transformer, vae=self.vae,
             text_encoder=text, processor=processor, sample_sigmas=None, vae_tile=True)
@@ -193,6 +221,28 @@ class ImageRunner:
 
         return [embedding.register_forward_pre_hook(to_host), embedding.register_forward_hook(to_card)]
 
+    def _fits_whole_model(self):
+        """True when a 1024x1024 request plans every DiT block and encoder layer on the card."""
+        try:
+            plan = image_policy.plan_image(gpu_budget_bytes=self.budget(), width=1024, height=1024)
+        except Exception:
+            return False
+        shape = image_policy.ImageShape()
+        return plan.feasible and plan.dit_resident_layers == shape.dit_blocks == plan.dit_kept_layers \
+            and plan.te_resident_layers == shape.te_layers
+
+    def _to_streamed(self):
+        """A request no longer fits the whole model on the card: put the host copy back and stream."""
+        try:
+            with torch.no_grad():
+                if hasattr(self.dit_stack, 'to_streamed'):
+                    self.dit_stack = self.dit_stack.to_streamed()
+                if hasattr(self.te_stack, 'to_streamed'):
+                    self.te_stack = self.te_stack.to_streamed()
+        finally:
+            torch.cuda.empty_cache()
+        # Only now: a stack that stopped is still whole-model, so the next request tries again.
+        self.full_card = False
     def budget(self):
         if self.gpu_budget_bytes is not None:
             return int(self.gpu_budget_bytes)
@@ -217,6 +267,8 @@ class ImageRunner:
             memory = system_memory()
             free = memory.get('physical_available_bytes') or memory['available_bytes']
             host_available = free + self.dit_stack.host_bytes + self.te_stack.host_bytes
+            if self.full_card:
+                host_available = None
         except Exception:
             host_available = None
         return image_policy.plan_image(
@@ -226,16 +278,23 @@ class ImageRunner:
     def generate(self, prompt, *, width, height, seed=None, reference_images=None, edit_mask=None,
                  progress=None, cancel=None):
         plan = self.plan(width, height, reference_images)
+        if self.full_card and not self._all_on_card(plan):
+            self._to_streamed()
+            plan = self.plan(width, height, reference_images)
         self.last_plan = plan
         if not plan.feasible:
             raise MemoryError('; '.join(plan.reasons) or 'the image model does not fit this machine')
-        self.dit_stack.set_resident(plan.dit_resident_layers)
+        self.dit_stack.set_resident(_kept(plan))
         self.te_stack.set_resident(plan.te_resident_layers)
         self.generator.vae_tile = plan.vae_tiling
         self.generator.vae_tile_size = plan.vae_tile_size
         return self.generator.generate(prompt, width=width, height=height, seed=seed,
                                        reference_images=reference_images, edit_mask=edit_mask,
                                        progress=progress, cancel=cancel)
+
+    def _all_on_card(self, plan):
+        return (plan.feasible and _kept(plan) == len(self.dit_stack.layers)
+                and plan.te_resident_layers == len(self.te_stack.layers))
 
     def at_boundary(self):
         """False when a failure left a weights streamer inside a layer pass; the next request cannot use it."""

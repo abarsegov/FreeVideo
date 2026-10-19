@@ -52,6 +52,8 @@ STRIDE = 8
 GUARD = 1         # reports of the guarded easycache-av carry this; earlier ones reused steps unchecked
 MAX_SHARE = .4   # at most this share of a pass's steps may reuse the cache (measured median is about 40%)
 LAST_FULL = 3     # the last steps always run the model
+SHORT_PASS = 16   # a configured easycache-av pass of at most this many steps (精细) reuses at this looser threshold,
+SHORT_THRESHOLD = .30  # measured: 5 of 16 steps reused, 26 dB against the same 16 steps run in full (0.2 reused 3)
 
 
 def requested(config=None):
@@ -199,6 +201,8 @@ class StepCache:
 def begin_pass(transformer, steps, config=None, *, offloader=None, disabled_reason=None):
     """Attach fresh state for this sampling pass; refinement never calls this."""
     wanted = requested(config)
+    if wanted and wanted[2] == 'config' and wanted[0] == 'easycache-av' and steps <= SHORT_PASS:
+        wanted = (wanted[0], SHORT_THRESHOLD, wanted[2])
     transformer._freevideo_step_cache = (StepCache(wanted[0], wanted[1], steps, source=wanted[2],
         offloader=offloader, disabled_reason=disabled_reason) if wanted else None)
     return transformer._freevideo_step_cache

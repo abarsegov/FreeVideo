@@ -1,4 +1,5 @@
 import {capabilityPoints, interpolate} from './chain_support.js';
+import {issueButton} from './issue_button.js';
 import {buildPlanRequest, readLengthPlan, classifyPlanError, singleLimitSeconds, defaultBlockSeconds} from './length_plan.js?v=20261011-length';
 
 export const LENGTH_PROPERTIES = Object.freeze({seconds: 'freevideo_seconds', single: 'freevideo_single', block: 'freevideo_block_seconds'});
@@ -82,6 +83,7 @@ export function createStudioLength({api, node, seconds, advanced, fields, t, fie
         hint.hidden = absent || (noParts && Boolean(error));
         note.hidden = absent || !error;
         note.textContent = error ? errorMessage(error) : '';
+        if (error === 'other') note.append(issueButton(t, () => ({where: ['Video length planning', '视频分段规划'], message: errorMessage('other')})));
         note.style.margin = noParts && error === 'continuation_unavailable' ? '12px 0' : ''; // as spaced as the line it replaces
     }
     function errorMessage(kind) {

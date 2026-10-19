@@ -172,7 +172,7 @@ class Session:
             from .launcher_update import current_build, UpdateClient
             identity = current_build()
             if identity:
-                self.updater = UpdateClient(identity, launcher_root())
+                self.updater = UpdateClient(identity, launcher_root(), language=self.language)
         if self.updater and not self.updater.busy:
             self.updater.run('check')
         self.update_checked = time.monotonic()
@@ -252,7 +252,10 @@ class Session:
             self.explain_busy()
             return
         if key == 'language':
-            self.language = str(value); self.persist(); return
+            self.language = str(value)
+            if self.updater:
+                self.updater.language = self.language
+            self.persist(); return
         if key == 'token':
             if self.controller.busy:
                 raise ValueError(self.t('Pause installation before changing the token.', '请先暂停安装，再修改 Token。'))

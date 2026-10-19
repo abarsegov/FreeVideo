@@ -1,37 +1,74 @@
 {
   "schema": 1,
-  "product_version": "0.4.14",
+  "product_version": "0.4.15",
   "en": {
-    "summary": "Max is faster, a picture can now be changed only inside a region you select, agents can import their own clips into the timeline, and long videos can take more requests into the queue while they generate.",
+    "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
     "changes": [
-      "Quality levels: Max now uses 20 steps with a guarded step cache and finishes sooner; High uses 16 steps with the step cache. The level names stay the same.",
-      "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
-      "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
-      "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
-      "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
-      "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
-      "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
-      "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
-      "Feedback: feedback sent for a failed generation now includes the engine's error message.",
-      "Install: the Windows library checks also handle files in deeply nested folders."
+      "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
+      "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
+      "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
+      "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
+      "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
+      "Character sheets: in the back view, the head now turns away together with the body.",
+      "Mac: long videos can now be generated in parts.",
+      "Launcher and updates: Windows updates download faster in mainland China. When GitHub is slow, the launcher can fetch the update from a domestic mirror, and every file from the mirror is checked against the release signature before use. The install confirmation page now fits narrow windows: the sidebar collapses to icons and the buttons stay visible.",
+      "Workflows: workflows saved by older versions run again. Options added in later versions that are empty or invalid in an old file are set back to their defaults.",
+      "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920x1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
+      "LoRA: a LoRA trained for Wan 2.x now says so when it is selected for the int8 model, instead of only saying it cannot be used.",
+      "Linux: on computers with less memory, generating again right after a generation no longer runs out of memory near the end of sampling. On 6 GB graphics cards, Max no longer takes hours to finish."
     ]
   },
   "zh": {
-    "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
+    "summary": "生图工具会保存所有生成过的图片，小显存和大显存的显卡生图都更省内存；所有错误提示旁都有“提交问题”按钮；Windows 版在中国大陆更新更快。",
     "changes": [
-      "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
-      "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
-      "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
-      "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
-      "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
-      "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
-      "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
-      "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
-      "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
-      "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
+      "生图：本机生成过的图片都保存在历史记录里，按时间从新到旧排列，可放到画布、用作参考图、删除或打开所在文件夹。空白画布可选“标准 / 高清”尺寸。",
+      "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存放得下整个模型的显卡，权重直接加载到显卡，不再在内存里留一份副本，加载后内存占用从约 15 GB 降到约 2 GB。",
+      "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点一下带上情况打开问题反馈。",
+      "AI 全自动：对话删不掉时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
+      "白模：现成场景只保留“橘猫跳上书架”，点一下直接开始。白模没做成时会说明原因和下一步，渲染中页面显示进度。问白模进度时会回答进度，不再当成新要求。",
+      "人物设定图：背面图里头和身体一起转向背后。",
+      "Mac：支持分段生成长视频。",
+      "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收成图标，按钮始终可见。",
+      "工作流：旧版本存的工作流可以直接运行。旧文件里后加的选项为空或不合法时，改回默认值。",
+      "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存差一点而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
+      "LoRA：为 Wan 2.x 训练的 LoRA 选进 int8 模型时，会说明这是给 Wan 2.x 训练的 LoRA，不再只说无法使用。",
+      "Linux：内存较小的电脑接着再生成一次时，不再在采样快结束时内存不足。6 GB 显存的显卡选“极致”时，不再要等好几个小时。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.14",
+      "en": {
+        "summary": "Max is faster, a picture can now be changed only inside a region you select, agents can import their own clips into the timeline, and long videos can take more requests into the queue while they generate.",
+        "changes": [
+          "Quality levels: Max now uses 20 steps with a guarded step cache and finishes sooner; High uses 16 steps with the step cache. The level names stay the same.",
+          "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
+          "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
+          "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
+          "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
+          "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
+          "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
+          "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
+          "Feedback: feedback sent for a failed generation now includes the engine's error message.",
+          "Install: the Windows library checks also handle files in deeply nested folders."
+        ]
+      },
+      "zh": {
+        "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
+        "changes": [
+          "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
+          "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
+          "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
+          "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
+          "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
+          "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
+          "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
+          "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
+          "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
+          "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.13",
       "en": {
@@ -248,39 +285,6 @@
           "创作面板：提示更简短。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用二次采样，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
           "安装和启动器：安装进度更平稳，总进度会跟随显卡加速编译和最后的启动步骤，副行不再显示文件名，终端只在出错时需要打开；安装和更新的说法更直白。",
           "进度与出错提示：说法更短、更直白。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.6",
-      "en": {
-        "summary": "Long videos keep the same voices and people from part to part and no longer pause where parts join, and a new character library lets you create characters, generate their pictures and bring them into a prompt with @. A small preview appears while a video is generated, a waiting video can be moved to the front of the queue, and image generation, the editing view and the launcher get many fixes.",
-        "changes": [
-          "Long videos: voices keep the same sound and loudness from part to part, the pause and the return to the same pose where parts with dialogue join are gone, and continued parts also receive the characters' pictures. A long video made in one request gives each part its own share of the description, and each part's description can be read and edited; if the description cannot be split, every part uses the whole description and the reason is shown. Agent can also write one description per part.",
-          "Characters: the material section has a character row where you add, edit and delete characters, each with a front picture and up to five more views. The AI tab of the character dialog generates the front, three-quarter, side, back and face pictures one by one, with progress, stop and retry. Type @ in the prompt to bring a character's pictures in as references. In Agent shots, continuing parts carry the characters' pictures too: two when one person is in the shot, one each when there are more.",
-          "Continue from video: first and last frame images are used as reference pictures, and settings that cannot continue a video are adjusted automatically with a short note instead of stopping with an error. In the editing view, a part that continues the one before keeps your reference pictures, so people stay the same; first and last frames apply only to a part that starts fresh.",
-          "Generation: from the third sampling step, a small picture of the frames being made appears in the progress block, in both passes. The creation panel and the bottom bar show the same estimated time, and once a run goes past it both say it is taking longer than expected. The main button stays on Add to queue while a video is running. Above Generate, the creation panel lists what the current settings will still download and which LoRA files cannot be found.",
-          "Queue: from the second waiting video on, each row has a Move to front button. The row is greyed until the server confirms; the running video and the parts of a continuous chain are never moved. The waiting list is shown in queue order and stays inside narrow windows.",
-          "Image generation: when graphics memory runs out, the picture is retried one size smaller until it fits, and the size made is shown. After the image pack is moved or copied it is checked again instead of being reported as missing and downloaded again. A page refresh resumes the running image task at its exact canvas size, and a request that arrives while the idle image worker is closing runs on a fresh worker instead of failing.",
-          "Editing view: a subtitle look can be saved as a style and applied to every subtitle in one press; a range drawn on the timeline starts exactly where it is pressed; a queued part that is cancelled, or left unstarted when a run fails, shows as stopped, and after a cancel is accepted the bar reads Stopping; a failed save before export names the reason, and choosing media without sound for Replace audio says so.",
-          "Install and launcher: Settings show right away what an installation check or install is doing, and the launcher shows counts and speed while it finds, checks and copies existing models. The one-time background kernel compile after an install or update starts about 5 seconds after ComfyUI opens instead of 30. Reopening the creation panel from the launcher keeps the previous project's media and connections. On macOS, the update reminder says to download the new version and replace the current one, and its button opens the download page.",
-          "AI autopilot: every button responds at once and retries before giving up, and a message sent while the agent is not listening goes out when it listens again. Failed tasks, pictures, short dramas and character cards name the step that failed and offer the same report download and submit dialog as video. The character library keeps every picture of cards without a front picture, tells characters that share a name apart, and stays hidden while the Agent interface is off.",
-          "Optional inputs left empty or written as \"None\" or \"null\" by older workflows or scripts are no longer treated as real values, so an ordinary generation is no longer sent down the second-pass route."
-        ]
-      },
-      "zh": {
-        "summary": "长视频各段的人声和人物保持一致，段与段相接处不再停顿；新增角色库，可以新建角色、用 AI 生成角色图片，并在描述里用 @ 引用。生成视频时进度块里会显示正在生成的画面小预览，等待中的视频可以排到最前；图像生成、剪辑视图和启动器也修复了多处问题。",
-        "changes": [
-          "长视频：人声在各段之间保持同样的音色和音量；有对话的段相接处不再停顿，人物也不再每段回到同一个姿势；接续的段也会带上人物参考图。一次请求生成的长视频，每段只用描述里属于自己的部分，每段的描述可以查看和修改；描述无法拆分时，各段都用完整描述，并说明原因。Agent 也可以为每段分别写描述。",
-          "角色：素材区新增“角色”一行，可以新建、编辑和删除角色，每个角色有一张正面图和最多五张其他角度图。角色对话框的“AI 生成”会逐张生成正面、四分之三、侧面、背面和脸部五张图，可看进度、停止和重试。在描述里输入 @ 可以引用角色，它的图片自动加入参考素材。Agent 拍片时，接续的镜头也带上人物图片：只有一个人时带两张，多人时每人一张。",
-          "视频接续：首帧和尾帧图会用作参考图；不能用于接续的设置会自动调整并附一句说明，不再直接报错停止。剪辑视图里接着上一段生成的段会保留参考图，人物保持一致；首尾帧只用于重新开始的段。",
-          "生成：从采样第 3 步起，进度块里会显示一张正在生成的画面小预览，两遍采样都有。创作面板和底栏显示同一个预计时间，超过预计后两处都改为“比预计久”。视频生成中主按钮保持“加入队列”。“生成”按钮上方会列出当前设置还需要下载的内容，以及找不到的 LoRA 文件。",
-          "队列：从第 2 个等待中的视频起，每行有“排到最前”按钮。点击后这一行置灰，服务端确认后按新顺序显示；正在生成的视频和连续生成的各段不会被移动。等待列表按队列顺序显示，在窄窗口里也不会被截掉。",
-          "图像生成：显存不足时自动缩小一档重试，直到能出图，并显示实际尺寸。图像包被移动或复制后会先重新校验，不再误报缺失、要求重新下载。刷新页面后会按原画布尺寸接回正在进行的图像任务；空闲的图像进程正在关闭时发来的请求会在新进程上运行，不再失败。",
-          "剪辑视图：字幕样式可以存为预设，一键套用到所有字幕；在时间线上画范围，起点就是按下的位置；取消排队中的段，或整条失败时还没开始的段，会显示为已停止，取消生效后底栏显示“正在停止”；导出前保存失败会说明原因；替换声音时选了没有声音的素材会提示。",
-          "安装和启动器：设置里检查安装、开始安装时马上显示正在做什么；启动器复用已有模型时，显示查找、校验和复制的项数与速度。安装或更新后的一次性后台内核编译在 ComfyUI 打开约 5 秒后开始（原来 30 秒）。从启动器重新打开创作面板时，上次工程的素材和连线会保留。Mac 上的更新提醒写明“下载新版后替换当前版本”，按钮会打开下载页。",
-          "AI 全自动：每个按钮点了都会马上响应，失败会先重试；Agent 没在接收时发出的消息，会在它恢复后发出。任务、图片、短剧和角色卡失败时写明是哪一步出的错，并和视频一样可以下载和提交诊断报告。角色库里没有正面图的角色卡会保留全部图片，同名角色可以区分，Agent 界面关闭时角色库也隐藏。",
-          "旧工作流或脚本把可选输入留空、写成 \"None\" 或 \"null\" 时，不再被当成真实值，普通生成也不会再被误当作第二遍处理。"
         ]
       }
     }

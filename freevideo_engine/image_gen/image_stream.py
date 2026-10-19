@@ -61,3 +61,58 @@ class StreamedStack:
 
     def close(self):
         self.offloader.close()
+
+
+class ResidentStack:
+    """Every layer lives on the card and nothing is kept on the host.
+
+    Stands in for ``StreamedStack`` while the planned residency is the whole
+    stack, so the host holds no second copy of the weights. ``to_streamed``
+    brings the layers back for a request whose budget no longer fits them all.
+    """
+
+    def __init__(self, layers, *, name, device='cuda'):
+        self.name = name
+        self.layers = list(layers)
+        if not self.layers:
+            raise ValueError('ResidentStack needs at least one layer')
+        self.device = device
+        self.host_bytes = 0
+        self.layer_bytes = max(sum(tensor.numel() * tensor.element_size()
+                                   for tensor in list(layer.parameters()) + list(layer.buffers()))
+                               for layer in self.layers)
+        self.resident = len(self.layers)
+
+    at_boundary = True
+    cpu = ()   # no host weights
+
+    @property
+    def offloader(self):
+        return self
+
+    def set_resident(self, count):
+        return self.resident
+
+    def stats(self):
+        return dict(name=self.name, layers=len(self.layers), layer_bytes=self.layer_bytes, pinned_layers=0,
+                    pinned_bytes=0, resident_layers=self.resident, cached_bytes=0, host_copy=False)
+
+    def to_streamed(self, **options):
+        """Copy the layers back to the host and return a ``StreamedStack`` over them."""
+        moved = []
+        try:
+            for layer in self.layers:
+                layer.to('cpu')
+                moved.append(layer)
+        except BaseException:
+            for layer in moved:
+                layer.to(self.device)
+            raise
+        try:
+            return StreamedStack(self.layers, name=self.name, device=self.device, **options)
+        except Exception:
+            # Locking pages failed: stream from ordinary memory instead.
+            return StreamedStack(self.layers, name=self.name, device=self.device, **{**options, 'pin': False})
+
+    def close(self):
+        pass

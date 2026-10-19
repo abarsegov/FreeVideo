@@ -71,5 +71,5 @@
 @keyframes fv-generation-mini-sweep{0%{left:-40px}100%{left:100%}}
 @keyframes fv-generation-mini-light{0%{transform:translateX(-40px)}100%{transform:translateX(160px)}}
 @media (prefers-reduced-motion:reduce){.fv-generation-mini[data-mode=indeterminate] .fv-generation-mini-fill{left:60px;animation:none}.fv-generation-mini[data-shimmer=true]::after{animation:none;opacity:0}}
-
 .fv-generation-progress[data-workflow=true] .fv-generation-count{font-size:14px;letter-spacing:0;line-height:1.4;color:var(--fv-muted,#a2abba)}
+.fv-generation-progress>.fv-issue-button{margin-top:6px;align-self:center}

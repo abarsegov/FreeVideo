@@ -1,6 +1,7 @@
 // One whole-video estimate and the same five rows in Studio and the node view.
 import { saveReport, reportIssue, showReportTip } from './report_issue.js';
 import {workflowProgressView} from './workflow_progress_view.js';
+import { issueButton } from './issue_button.js';
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./generation_progress.css', import.meta.url).href;
 document.head.append(css);
@@ -375,15 +376,17 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
         }
     }
     const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
+    let problem;
     // A finished video's report is fetched once and kept: the file saved and the one sent are the same.
     let reportId = null, revision = 0, pinned = false, pinnedBlob = null;
     report.textContent = label();
     function updateReport(message) {
         if (message.new_request === true || message.overall?.reset === true || message.reset === true && !message.phase) {
+            problem?.remove();
             reportId = null; revision++; report.hidden = true; pinned = false; pinnedBlob = null;
         }
         if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
-            if (reportId !== message.report_id) { revision++; pinned = false; pinnedBlob = null; report.disabled = false; report.textContent = label(); }
+            if (reportId !== message.report_id) { problem?.remove(); revision++; pinned = false; pinnedBlob = null; report.disabled = false; report.textContent = label(); }
             reportId = message.report_id;
         }
         report.hidden = !reportId && !fallback;
@@ -405,6 +408,7 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
     async function downloadReport() { await saveReport(await fetchReport()); }
     report.onclick = async () => {
         if (report.disabled || report.hidden) return;
+        problem?.remove();
         const current = revision;
         report.disabled = true; report.textContent = t('Preparing report…', '正在整理报告…');
         try {
@@ -415,7 +419,11 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
                     submit: () => reportIssue(fetchReport, typeof version === 'function' ? version() : version, {save: false})});
             }
         } catch {
-            if (current === revision) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
+            if (current === revision) {
+                report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
+                problem = issueButton(t, () => ({where: ['Diagnostic report', '诊断报告'], message: report.textContent}));
+                report.after(problem);
+            }
         } finally { if (current === revision) report.disabled = false; }
     };
     return {report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null, pin: () => { pinned = true; }};

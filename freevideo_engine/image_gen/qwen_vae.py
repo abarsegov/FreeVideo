@@ -28,6 +28,17 @@ DecoderOutput = ModelOutput
 CACHE_T = 2
 
 
+def _frame_cache(feat_map, num_frames):
+    """The causal cache of the encoder or decoder, or None for a single frame.
+
+    The first frame never reads the cache (every entry is still empty), it only
+    fills it with a copy of each convolution's input for the next frame. A
+    picture has no next frame, so those copies were dead weight: about 5 GiB
+    at 1024x1024 untiled. Without them the arithmetic is the same.
+    """
+    return feat_map if num_frames > 1 else None
+
+
 # Copied from diffusers.models.autoencoders.autoencoder_kl_wan.AvgDown3D with AvgDown3D->QwenImage21AvgDown3D
 class QwenImage21AvgDown3D(nn.Module):
     def __init__(
@@ -1265,7 +1276,8 @@ class QwenImageVAE(nn.Module):
         for i in range(iter_):
             self._enc_conv_idx = [0]
             if i == 0:
-                out = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+                out = self.encoder(x[:, :, :1, :, :], feat_cache=_frame_cache(self._enc_feat_map, iter_),
+                                   feat_idx=self._enc_conv_idx)
             else:
                 out_ = self.encoder(
                     x[:, :, 1 + 4 * (i - 1) : 1 + 4 * i, :, :],
@@ -1326,7 +1338,8 @@ class QwenImageVAE(nn.Module):
             self._conv_idx = [0]
             if i == 0:
                 out = self.decoder(
-                    x[:, :, i : i + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx, first_chunk=True
+                    x[:, :, i : i + 1, :, :], feat_cache=_frame_cache(self._feat_map, num_frame),
+                    feat_idx=self._conv_idx, first_chunk=True
                 )
             else:
                 out_ = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
@@ -1452,7 +1465,8 @@ class QwenImageVAE(nn.Module):
                             i : i + self.tile_sample_min_height,
                             j : j + self.tile_sample_min_width,
                         ]
-                    tile = self.encoder(tile, feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+                    tile = self.encoder(tile, feat_cache=_frame_cache(self._enc_feat_map, frame_range),
+                                        feat_idx=self._enc_conv_idx)
                     tile = self.quant_conv(tile)
                     time.append(tile)
                 row.append(torch.cat(time, dim=2))
@@ -1526,7 +1540,8 @@ class QwenImageVAE(nn.Module):
                     tile = z[:, :, k : k + 1, i : i + tile_latent_min_height, j : j + tile_latent_min_width]
                     tile = self.post_quant_conv(tile)
                     decoded = self.decoder(
-                        tile, feat_cache=self._feat_map, feat_idx=self._conv_idx, first_chunk=(k == 0)
+                        tile, feat_cache=_frame_cache(self._feat_map, num_frames), feat_idx=self._conv_idx,
+                        first_chunk=(k == 0)
                     )
                     time.append(decoded)
                 row.append(torch.cat(time, dim=2))

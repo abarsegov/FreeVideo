@@ -4,7 +4,7 @@ from pathlib import Path
 
 from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
-from . import comfy_bridge
+from . import comfy_bridge, workflow_repairs
 from .comfy_continuation import node_frames, optional_text, part_steps, request_options
 from .default_prompt import DEFAULT_PROMPT
 
@@ -20,9 +20,12 @@ def clean_prompt(json_data):
 
     ComfyUI rejects '' or None for an integer input before validate_inputs runs, so the value is
     read here the same way the node reads it (node_frames): anything that is not a count the model
-    makes follows Duration. Links and other nodes are left as they are.
+    makes follows Duration. The optional inputs an older workflow holds in a form the node refuses
+    (workflow_repairs) fall back to their defaults and are noted for the diagnostic report. Links and
+    other nodes are left as they are.
     """
     prompt = json_data.get('prompt') if isinstance(json_data, dict) else None
+    repaired = []
     for node in prompt.values() if isinstance(prompt, dict) else ():
         inputs = node.get('inputs') if isinstance(node, dict) and node.get('class_type') == 'FreeVideoGenerate' else None
         if (isinstance(inputs, dict) and inputs.get('backend') == 'workflow'
@@ -35,6 +38,15 @@ def clean_prompt(json_data):
                 logging.info('[FreeVideo] Total frames %r is not a frame count; the length follows Duration.',
                              str(inputs['frames'])[:40])
                 inputs['frames'] = frames
+        if isinstance(inputs, dict):
+            repaired += workflow_repairs.repair_inputs(inputs)
+    if repaired:
+        logging.info('[FreeVideo] Optional inputs from an older workflow were reset to their defaults: %s.',
+                     ', '.join(sorted(set(repaired))))
+        try:
+            workflow_repairs.record(comfy_bridge.installation_root(), 'request', repaired)
+        except (OSError, ValueError) as error:
+            logging.warning('[FreeVideo] Could not note the reset inputs: %s', error)
     from .comfy_workflows import registry
     try:
         return registry().expand(json_data)

@@ -38,6 +38,7 @@
 .fv-cast-dialog .fv-cast-bad .fv-cast-choose{border:1px solid var(--fv-danger)}
 .fv-cast-slot-error{position:absolute;left:1px;right:1px;bottom:1px;padding:4px 3px;border-radius:0 0 var(--fv-r-sm,8px) var(--fv-r-sm,8px);background:var(--fv-bg);color:var(--fv-danger);font-size:12px;line-height:1.4;word-break:keep-all;overflow:hidden;pointer-events:none}
 .fv-cast-slot-line{display:block}
+.fv-cast-slot-error .fv-issue-button{pointer-events:auto;font-size:11px;min-height:24px;padding:2px 5px;max-width:100%}
 .fv-cast-message{margin-top:12px;color:var(--fv-danger);white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
 .fv-cast-message.fv-cast-notice{color:var(--fv-muted)}
 .fv-cast-dialog .fv-cast-delete.fv-cast-confirm{border-color:#c9414f;background:#c9414f;color:#fff}

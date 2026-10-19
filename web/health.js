@@ -16,7 +16,7 @@ const launchVisit = query.get('freevideo') === 'launch';
 export const MODULES = ['agent_activity.js', 'agent_connect.js', 'agent_session.js', 'autopilot.js', 'autopilot_chat.js', 'autopilot_conversations.js', 'browser_extension.js', 'caret_rect.js', 'chain_support.js', 'capability_view.js', 'cast_generate.js', 'cast_mention.js', 'cast_overlay.js', 'cast_source.js', 'compatibility.js', 'entry_showcase.js', 'error_panel.js', 'first_run_guide.js', 'fonts.js', 'freevideo.js', 'generation_progress.js',
     'editor.js', 'editor_actions.js', 'editor_lifecycle.js', 'editor_adjust.js', 'editor_adjust_picture.js', 'editor_picture_fields.js', 'editor_picture_session.js', 'editor_preview_picture.js', 'editor_entry.js', 'editor_expand.js', 'editor_export_dialog.js', 'editor_first_frame.js', 'editor_media_references.js', 'editor_references.js', 'editor_genbar.js', 'editor_geometry.js', 'editor_library.js', 'editor_menu.js', 'editor_model.js', 'editor_frame.js', 'editor_player.js', 'editor_room.js', 'editor_select.js', 'editor_state.js', 'editor_store.js', 'editor_tracks.js', 'editor_generation.js', 'editor_transport.js', 'editor_transport_model.js', 'editor_audio.js', 'editor_audio_model.js', 'editor_audio_notes.js', 'editor_audio_replace.js', 'editor_audio_rules.js', 'editor_speed.js', 'editor_speed_model.js', 'editor_failure.js', 'editor_header_fit.js',
     'editor_loader.js', 'editor_text_coverage.js', 'editor_text.js', 'editor_toolbar_more.js', 'editor_text_model.js', 'editor_text_layout.js', 'editor_notes.js', 'editor_icons.js', 'dialog_keys.js', 'done_notify.js', 'failure_issue.js', 'feedback.js', 'frame_sizes.js', 'health.js', 'image_commands.js', 'image_editor.js', 'image_editor_engine.js', 'image_generation.js', 'launch_visit.js', 'launcher.js', 'length_plan.js', 'lora_triggers.js', 'lora_check.js', 'library.js', 'motion.js', 'native_errors.js', 'translate_guard.js', 'output_download.js', 'port_notice.js', 'preview_scene.js',
-    'progress_connection.js', 'prompt_draft.js', 'prompt_enhance.js', 'prompt_references.js', 'prompt_terms.js', 'request_assets.js', 'repair_hint.js', 'report_issue.js', 'studio_recent.js',
+    'progress_connection.js', 'prompt_draft.js', 'prompt_enhance.js', 'prompt_references.js', 'prompt_terms.js', 'request_assets.js', 'repair_hint.js', 'report_issue.js', 'issue_button.js', 'studio_recent.js',
     'result_actions.js', 'sampling_effort.js', 'setup.js', 'share.js', 'share_layout.js', 'studio.js', 'studio_chain.js', 'studio_extend.js', 'studio_length.js', 'first_frame_row.js', 'optional_inputs.js', 'studio_queue.js', 'studio_size.js',
     'toolbar_position.js', 'updates.js', 'view_navigation.js', 'wordmark.js', 'workspace_restore.js', 'cast_library.js', 'media_upload.js', 'whitebox_encode.js', 'whitebox_mp4.js', 'whitebox_recording.js', 'whitebox_render.js', 'whitebox_scenes.js', 'whitebox_worker.js'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -134,8 +134,8 @@ async function probe(url) {
 const ADVICE = {
     files: t('FreeVideo’s page files are missing or unreadable. In the FreeVideo launcher, open Settings and click Repair, then open FreeVideo again. Without the launcher, update the FreeVideo node and restart ComfyUI.',
         'FreeVideo 的网页文件缺失或无法读取。请在 FreeVideo 启动器的“设置”里点击“修复”，完成后重新打开。没有使用启动器时，请更新 FreeVideo 节点并重启 ComfyUI。'),
-    type: t('ComfyUI sent the file with the wrong type, so the browser refused it. Restart ComfyUI. If it persists, copy the details and submit them in a GitHub issue; we will look into it and work on a fix for you.',
-        'ComfyUI 发给浏览器的文件类型不对，浏览器拒绝使用。请重启 ComfyUI；仍然出现时，请复制详情并提交到 GitHub issue，我们会专门排查，为您解决这个问题。'),
+    type: t('ComfyUI sent the file with the wrong type, so the browser refused it. Restart ComfyUI. If it persists, use Report a problem.',
+        'ComfyUI 发给浏览器的文件类型不对，浏览器拒绝使用。请重启 ComfyUI；仍然出现时，请点“提交问题”。'),
     browser: t('This browser cannot run FreeVideo. Open the same address in a current Chrome or Edge.',
         '当前浏览器无法运行 FreeVideo。请用最新版 Chrome 或 Edge 打开同一个地址。'),
     mixed: t('The browser mixed files from two FreeVideo versions. Press Ctrl+F5 to reload without the cache.',
@@ -144,10 +144,10 @@ const ADVICE = {
         '请保留 custom_nodes/FreeVideo，把其他 FreeVideo 文件夹移出 custom_nodes，然后重启 ComfyUI。'),
     plugin: t('Another ComfyUI extension reported an error at the same time. Turn it off in ComfyUI Settings › Extensions, then reload.',
         '同时有其他 ComfyUI 插件报错。可在 ComfyUI“设置 › 扩展”里暂时停用它，然后刷新页面。'),
-    reload: t('Reload the page. If it happens again, copy the details and submit them in a GitHub issue; we will look into it and work on a fix for you.',
-        '请刷新页面。仍然出现时，请复制详情并提交到 GitHub issue，我们会专门排查，为您解决这个问题。'),
-    cache: t('FreeVideo already reloaded this page once with fresh copies of its files. Press Ctrl+F5. If it still fails, turn off browser extensions that block scripts on this page or open the same address in another browser. If that does not help, copy the details and submit them in a GitHub issue; we will look into it and work on a fix for you.',
-        'FreeVideo 已经用重新下载的文件自动刷新过一次页面。请按 Ctrl+F5 强制刷新；仍然出现时，请停用会拦截此页面脚本的浏览器插件，或换一个浏览器打开同一地址。仍未解决时，请复制详情并提交到 GitHub issue，我们会专门排查，为您解决这个问题。'),
+    reload: t('Reload the page. If it happens again, use Report a problem.',
+        '请刷新页面。仍然出现时，请点“提交问题”。'),
+    cache: t('FreeVideo already reloaded this page once with fresh copies of its files. Press Ctrl+F5. If it still fails, turn off browser extensions that block scripts on this page or open the same address in another browser. If that does not help, use Report a problem.',
+        'FreeVideo 已经用重新下载的文件自动刷新过一次页面。请按 Ctrl+F5 强制刷新；仍然出现时，请停用会拦截此页面脚本的浏览器插件，或换一个浏览器打开同一地址。仍未解决时，请点“提交问题”。'),
     relaunch: t('Click Start in the FreeVideo launcher again.', '请在 FreeVideo 启动器里重新点击“启动”。'),
 };
 
@@ -458,6 +458,25 @@ function details(problems) {
         '', 'Errors seen while loading:', ...(seen.length ? seen.map(row => `- [${row.kind}] ${row.text}`) : ['- none'])].join('\n');
 }
 
+// "Report a problem": the feedback form with the failed checks in it. This card runs when other files
+// fail to load, so it builds the address itself (no shared module) and removes places and addresses.
+const ISSUE_FORM = 'https://github.com/FlashML-org/FreeVideo/issues/new';
+const forgetPlaces = text => String(text)
+    .replace(/https?:\/\/[^\s'"<>)]+/g, '<url>')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '<address>')
+    .replace(/(?:[A-Za-z]:[\\/]|\\\\|~[\\/])[^'"<>|\r\n]+/g, '<path>')
+    .replace(/(^|[\s('"])\/[\w.-]+(?:\/[^\s'"<>)]*)+/g, '$1<path>');
+function issueAddress(problems) {
+    const summary = forgetPlaces(details(problems)).split('\n').filter(line => !line.startsWith('Page:')).join('\n');
+    const feedback = ['FreeVideo showed an error.', 'Where: Page check',
+        `Error: ${forgetPlaces(problems[0]?.text || '').slice(0, 300)}`].join('\n');
+    const build = text => `${ISSUE_FORM}?${new URLSearchParams({template: 'feedback.yml', title: '[Feedback] Page check',
+        feedback, diagnostics: text})}`;
+    let text = summary.slice(0, 2500);
+    while (build(text).length > 7000 && text) text = text.slice(0, Math.floor(text.length * 0.8));
+    return build(text);
+}
+
 // The automatic reload: fresh copies into the HTTP cache, then the address the
 // page was opened with, before launcher.js removed its launch flag. Reported to
 // the launcher only if it fails again, so its card does not flash.
@@ -527,6 +546,7 @@ function show(problems) {
         }
         copy.textContent = t('Copied', '已复制');
     });
+    action(t('Report a problem', '提交问题'), () => window.open(issueAddress(problems), '_blank', 'noopener'));
     action(t('Close', '关闭'), () => { card?.remove(); card = null; });
     if (extensionAdvice) {
         const first = document.createElement('p'); first.textContent = extensionAdvice.summary;

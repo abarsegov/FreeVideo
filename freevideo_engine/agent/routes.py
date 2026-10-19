@@ -45,6 +45,10 @@ MOVED_BACK = (' It is one the user was in before, and the user means what was sa
 RESUMED = ('This conversation is already under way; its last lines are in "before". Do not introduce yourself again: '
            'say nothing until the user speaks, then carry on from there.')
 BEFORE_LINES, BEFORE_TEXT = 8, 600
+# The user started a white-model scene and then spoke: the words may be about it, not a new request.
+WHITEBOX_PENDING = ('The user started a white-model scene in this conversation ("whitebox" lists it). If the words ask about '
+                    'it or about progress, answer from its status in one sentence (waiting or rendering: still being made; '
+                    'failed: say it was not made, and why) and start nothing. A question is never a prompt.')
 
 
 def local_address(request):
@@ -1074,12 +1078,24 @@ def register():
                 raise JobError('not_found', 'No conversation')
             # Work in progress still writes into its conversation; finished videos stay in the library.
             # New work is refused first, so what is counted below cannot grow before the file goes.
+            def busy(leaving=()):
+                return (any(r.get('session') == sid and r['status'] in ACTIVE and r['status'] not in leaving for r in jobs.rows())
+                        or any(f['session'] == sid and not f['paused']
+                               for f in jobs.productions.list(status='active', limit=None)))
+            stop = value.get('stop') is True
+            if stop:  # The user confirmed: stop its jobs and pause its films first, as the stop button does.
+                jobs.stop_session(sid)
+                for _ in range(20):  # A running job takes a moment to reach its cancelled state.
+                    with jobs.lock:
+                        if not busy():
+                            break
+                    time.sleep(0.25)
             store.begin_delete(sid)
             try:
                 with jobs.lock:  # Productions share it.
-                    if (any(r.get('session') == sid and r['status'] in ACTIVE for r in jobs.rows())
-                            or any(f['session'] == sid and not f['paused']
-                                   for f in jobs.productions.list(status='active', limit=None))):
+                    # After the user's stop, a job still winding down no longer holds the conversation: its
+                    # writes are refused once deletion begins, so a stuck one cannot block deleting forever.
+                    if busy(('cancelling',) if stop else ()):
                         raise JobError('conflict', 'Work is in progress in this conversation')
                     store.delete(sid)
             except BaseException:
@@ -1725,6 +1741,10 @@ def register():
         follow = store is not None and not request.headers.get('X-FreeVideo-Session', '').strip()
         def answer(value):
             told, chat['told'][client] = chat['told'].get(client), value['session']
+            scenes = jobs.whitebox.open_for(value['session']) if value['inbox'] else []
+            if scenes:
+                value['whitebox'] = scenes
+                value['next'] = (WHITEBOX_PENDING + ' ' + value.get('next', '')).strip()
             if follow and told != value['session']:
                 first = value['inbox'][0]['seq'] if value['inbox'] else store.get(value['session'])['last_seq'] + 1
                 if first > 1:

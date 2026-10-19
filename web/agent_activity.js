@@ -1,4 +1,5 @@
 import {retryAgentPost} from './agent_session.js';
+import {issueButton} from './issue_button.js';
 // What agents connected to this FreeVideo are doing. Their requests share the
 // studio's queue, so people can see them, follow progress and stop them.
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./agent_activity.css', import.meta.url).href; document.head.append(css);
@@ -82,6 +83,8 @@ function row(job, t, api, refresh, open, cancellationErrors) {
     const details = el('p', 'fv-agent-meta', meta.join(' · '));
     if (reason && job.error?.message) details.title = job.error.message;
     foot.append(details);
+    const issue = issueButton(t, () => ({where: ['Agent activity', 'Agent 任务'], message: details.textContent}));
+    issue.hidden = !cancellationErrors.has(job.id); foot.append(issue);
     if (['waiting', 'queued', 'running'].includes(job.status)) {
         const stop = el('button', 'fv-agent-stop', t('Stop', '停止')); stop.type = 'button';
         stop.setAttribute('aria-label', t('Stop ', '停止 ') + title(job, t));
@@ -93,7 +96,8 @@ function row(job, t, api, refresh, open, cancellationErrors) {
                     const message = t('Could not stop. Click again.', '没能停止，请再点一次。');
                     details.textContent = message;
                     cancellationErrors.set(job.id, message);
-                } else cancellationErrors.delete(job.id);
+                    issue.hidden = false;
+                } else { cancellationErrors.delete(job.id); issue.hidden = true; }
             } finally { refresh(); }
             stop.disabled = false; stop.textContent = t('Stop', '停止');
         };

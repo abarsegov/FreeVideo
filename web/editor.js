@@ -6,6 +6,7 @@ import {viewSwitch, viewChanged} from './view_navigation.js';
 import {wordmark} from './wordmark.js';
 import {openSetup} from './setup.js';
 import {feedbackButton} from './feedback.js';
+import {issueButton} from './issue_button.js';
 import * as model from './editor_model.js';
 import {discardEmptyEdit, hiddenEmptyEdit, deleteEditText} from './editor_lifecycle.js';
 import {createEditorState} from './editor_state.js';
@@ -271,7 +272,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return true;
     }
     const content = record => JSON.stringify({...record, id: null, revision: 0});
-    function notify(text) { if (disposed) return; if (!text) { clearTimeout(noticeTimer); notice.hidden = true; return; } notice.textContent = text; notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000); }
+    // `where` marks a failure: the notice then carries the "Report a problem" button and stays longer to be reached.
+    function notify(text, where = null) {
+        if (disposed) return;
+        if (!text) { clearTimeout(noticeTimer); notice.hidden = true; return; }
+        notice.textContent = text;
+        if (where) notice.append(issueButton(t, () => ({where, message: text})));
+        notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, where ? 20000 : 9000);
+    }
+    const EDITOR_ISSUE = ['Editor', '编辑器'], EXPORT_ISSUE = ['Export', '导出'];
     // `step` names what was being done, so a failure there says which step went wrong; `out` is where the line is said (the bar's own line for a reference picture).
     function error(value, step = null, out = notify) {
         const code = value?.reason || value?.code || value?.message;
@@ -298,7 +307,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return {ok: false, reason: code};
         }
         const text = step === 'generate' ? editorErrorText(value, t) : step === 'export' ? exportErrorText(value, t) : t('Could not complete. Try again.', '没有完成，请重试');
-        out(text); return {ok: false, reason: code, say: text};
+        out(text, step === 'export' ? EXPORT_ISSUE : EDITOR_ISSUE); return {ok: false, reason: code, say: text};
     }
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
@@ -471,7 +480,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await queue.flush();
         }
         if (disposed || closing || epoch !== projectEpoch) return false;
-        if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return false; }
+        if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE); return false; }
         return !!state.record.id;
     }
     function updateTop() {
@@ -684,7 +693,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const words = deleteEditText(t);
             if (jobActive()) throw {reason: 'generation_active'};
             await queue.flush(); releaseStamp();
-            if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return; }
+            if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE); return; }
             // Load the replacement before deleting, so a read failure keeps the edit open.
             const rows = (await store.projects()).filter(row => row.id !== state.record.id);
             // Most recently used: the order the edits were opened, then the last save.
@@ -695,7 +704,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await discardProject();
             await replaceProject(record); menu.hidden = true; title.setAttribute('aria-expanded', 'false'); title.focus();
         } catch (value) {
-            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed);
+            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed, EDITOR_ISSUE);
         } finally { switching = false; element.inert = false; updateTop(); }
     }
     function confirmDelete() {
@@ -1067,7 +1076,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     function exportLost() {
         if (disposed) return;
         exportStatus = null; exportCancel.hidden = true; updateTop();
-        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'));
+        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'), EXPORT_ISSUE);
     }
     function updateExport(value) {
         if (!value) return false;
@@ -1081,7 +1090,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 else notify(value.reason === 'not_writable' ? t('Export failed: the output folder cannot be written to. Check that the folder can be written to, then retry.', '导出时出错：输出目录不可写。请检查这个文件夹的写入权限后重试。')
                     : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
                     : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
-                    : t('Export failed. Try again.', '导出时出错，请再试一次。'));
+                    : t('Export failed. Try again.', '导出时出错，请再试一次。'), EXPORT_ISSUE);
             }
             if (value.state === 'cancelled') notify(t('Export cancelled. No unfinished file is kept.', '已取消导出，没有留下不完整的文件。'));
             window.FreeVideoNotifyTaskDone?.({kind: 'export', id: value.id, ok: value.state === 'done'});
@@ -1310,7 +1319,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (!queue.dirty && emptyEdit()) {
                     try { await discardProject({automatic: true}); }
                     catch (value) {
-                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed);
+                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed, EDITOR_ISSUE);
                         closing = false; element.inert = false; closePromise = null; return false;
                     }
                 }

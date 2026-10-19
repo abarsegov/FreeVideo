@@ -1,5 +1,7 @@
 import {agentGet, agentPost, agentSend} from './agent_session.js';
 import {agentInterfaceEnabled} from './agent_connect.js';
+import {issueButton} from './issue_button.js';
+const CAST_ISSUE = ['Character library', '角色库'];
 
 // The optional generator owns its UI and job lifecycle; keep its contract here.
 async function mountGenerator(options) {
@@ -119,12 +121,14 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         const cancel = button('', text('Cancel', '取消'), () => close());
         const save = button('fv-cast-save', text('Save', '保存'), () => saveCard());
         actions.append(remove, cancel, save);
-        dialog.append(top, name, tabs, uploadPane, aiPane, status, actions); tabs.append(uploadTab, aiTab);
+        const issue = issueButton(text, () => ({where: CAST_ISSUE, message: status.textContent})); issue.hidden = true;
+        dialog.append(top, name, tabs, uploadPane, aiPane, status, issue, actions); tabs.append(uploadTab, aiTab);
 
         // A refresh notice is plain secondary text; only failures are shown as errors.
         const message = (content, notice = false) => {
             if (closed) return;
             status.textContent = content; status.hidden = !content; status.classList.toggle('fv-cast-notice', notice);
+            issue.hidden = !content || notice;
         };
         const aiBusy = () => aiState.busy || !!generator?.isBusy();
         // What is still missing before Save works ('' when nothing is); the button says so on hover and when pressed.
@@ -153,9 +157,11 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         function mark(index, content = '') {
             const {slot, problem} = slotUI[index];
             // Clear the line only while it still holds this tile's words, not a later message.
-            if (markedBelow === index) { markedBelow = -1; if (status.textContent === problem.textContent) message(''); }
+            if (markedBelow === index) { markedBelow = -1; if (status.textContent === problem.dataset.message) message(''); }
+            problem.dataset.message = content;
             // One line per clause, so "这张图片" is never split across lines.
             problem.replaceChildren(...content.replace(/([，。]|\. )/g, '$1\n').split('\n').filter(Boolean).map(part => el('span', 'fv-cast-slot-line', part)));
+            if (content) problem.append(issueButton(text, () => ({where: CAST_ISSUE, message: content})));
             problem.hidden = !content; slot.classList.toggle('fv-cast-bad', !!content);
             const width = slot.clientWidth;
             if (content && width > 0 && (width < 100 || problem.scrollWidth > problem.clientWidth || problem.offsetHeight > slot.clientHeight / 2)) {
@@ -260,8 +266,9 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                     label: picture.label || (index ? 'other' : 'front'),
                 }));
                 const frontNeeded = active === 'ai' || !frontless;
-                if (!pictures.length || pictures.length > 6 || (frontNeeded && !pictures.some(picture => picture.label === 'front')))
-                    throw new Error(text('Choose one front image and up to 5 more angles', '选一张正面图片，再加最多 5 张其他角度的图片'));
+                if (!pictures.length || pictures.length > 6 || (frontNeeded && !pictures.some(picture => picture.label === 'front'))) {
+                    message(text('Choose one front image and up to 5 more angles', '选一张正面图片，再加最多 5 张其他角度的图片'), true); return;
+                }
                 const images = [];
                 for (const picture of pictures) {
                     if (closed) return;

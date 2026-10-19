@@ -23,6 +23,11 @@ BODY_LIMIT = 64 * 1024
 CANCEL_GRACE = 5.
 MAX_IMAGES = 4
 REPORT_LIMIT = 16
+HISTORY_NAME = re.compile(r'image-\d{8}-\d{6}-\d{2}\.png')
+LEGACY_NAME = re.compile(r'[0-9a-f]{32}\.png')
+HISTORY_LIMIT = 500
+# The 高清 size is offered from this much card memory; smaller cards keep one size.
+HIGH_SIZE_MIN_TOTAL = 6 * 1024 ** 3
 INFERENCE_TIMEOUT = 600.
 QUEUE_TIMEOUT = 600.
 QUEUE_POLL = .1
@@ -147,11 +152,31 @@ class Service:
                     checking=not ready and image_pack.checking(machine['model_root']),
                     downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
-                    max_images=MAX_IMAGES, install=self.pack_state(ready),
+                    max_images=MAX_IMAGES, sizes=self.size_tiers(machine), install=self.pack_state(ready),
                     segment=dict(ready=image_pack.ready(machine['model_root'], group='segment'),
                                  max_points=16, device='cpu',
                                  install=self.segment_installer.state() if self.segment_installer else None),
                     bytes_per_second=None if ready else observed_speed(engine_root))
+
+    def size_tiers(self, machine):
+        """The sizes this card offers: the standard one always, the high one only with enough card memory."""
+        total = None
+        if machine.get('device_backend', 'cuda') == 'cuda':
+            from ..background_room import Gpu
+            from ..gpu_budget import open_bounded
+
+            def read():
+                gpu = Gpu(machine.get('gpu_uuid'))
+                try:
+                    memory = gpu.memory()
+                    return memory[1] if memory else None
+                finally:
+                    gpu.close()
+            try:
+                total = open_bounded(read, .5)
+            except (OSError, RuntimeError, AttributeError, ValueError):
+                total = None
+        return ['standard', 'high'] if total and total >= HIGH_SIZE_MIN_TOTAL else ['standard']
 
     def pack_state(self, ready):
         """Progress of the download this page started, in both languages for a failure."""
@@ -200,13 +225,84 @@ class Service:
             raise ValueError('invalid_media')
         return str(path)
 
-    def output_path(self):
+    def output_directory(self):
         directory = Path(self.input_directory()).resolve()
         output = directory / 'freevideo-image'
         if output.is_symlink() or output.resolve().parent != directory:
             raise ValueError('invalid_media')
         output.mkdir(exist_ok=True)
-        return str(output / (uuid.uuid4().hex + '.png'))
+        return output
+
+    def output_path(self, named=False):
+        """A new picture's path. Generated pictures get a readable name that the history lists."""
+        output = self.output_directory()
+        if not named:
+            return str(output / (uuid.uuid4().hex + '.png'))
+        stamp = time.strftime('image-%Y%m%d-%H%M%S')
+        for number in range(1, 100):
+            path = output / ('%s-%02d.png' % (stamp, number))
+            if not path.exists():
+                return str(path)
+        raise ValueError('invalid_media')
+
+    def legacy_picture(self, path):
+        """A picture from before generated names: a bare random name whose PNG is colour, since masks are grey."""
+        if not LEGACY_NAME.fullmatch(path.name) or path.is_symlink() or not path.is_file():
+            return False
+        try:
+            with path.open('rb') as handle:
+                head = handle.read(26)
+        except OSError:
+            return False
+        return head[:8] == b'\x89PNG\r\n\x1a\n' and head[25] in (2, 6)
+
+    def history(self):
+        """Every picture generated here, newest first; the folder is the record, so it outlives sessions."""
+        output = self.output_directory()
+        named, older = [], []
+        for entry in output.iterdir():
+            if HISTORY_NAME.fullmatch(entry.name) and entry.is_file() and not entry.is_symlink():
+                named.append(entry.name)
+            elif self.legacy_picture(entry):
+                try:
+                    older.append((entry.stat().st_mtime, entry.name))
+                except OSError:
+                    pass
+        names = sorted(named, reverse=True) + [name for _, name in sorted(older, reverse=True)]
+        return dict(items=[dict(file='freevideo-image/' + name, name=name) for name in names[:HISTORY_LIMIT]])
+
+    def history_delete(self, name):
+        leaf = name.rpartition('/')[2] if isinstance(name, str) else ''
+        if not (HISTORY_NAME.fullmatch(leaf) or LEGACY_NAME.fullmatch(leaf)) or name != 'freevideo-image/' + leaf:
+            raise ValueError('invalid_media')
+        path = self.output_directory() / leaf
+        if path.is_symlink() or not path.is_file() or (LEGACY_NAME.fullmatch(leaf) and not self.legacy_picture(path)):
+            raise ValueError('invalid_media')
+        path.unlink()
+        return self.history()
+
+    def history_open(self):
+        """Show the folder in the file manager of this machine."""
+        folder = str(self.output_directory())
+        if os.name == 'nt':
+            # The shell can block for good without a desktop session (SSH, service); never wait on it here.
+            failure = []
+
+            def show():
+                try:
+                    os.startfile(folder)
+                except OSError as error:
+                    failure.append(error)
+            thread = threading.Thread(target=show, name='history-open', daemon=True)
+            thread.start()
+            thread.join(2)
+            if failure:
+                raise failure[0]
+        else:
+            from .. import processes
+            processes.popen(['xdg-open', folder], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+        return dict(opened=True)
 
     def close_segment_worker(self):
         from .. import processes
@@ -348,9 +444,12 @@ class Service:
                         raise ValueError('invalid_media')
             except OSError:
                 raise ValueError('invalid_media') from None
+        cast_view = value.get('cast_view')
+        if cast_view is not None and (cast_view != 'back' or len(paths) != 1 or mask_path is not None):
+            raise ValueError('invalid_request')
         return dict(prompt=prompt, width=dimensions[0] // 32 * 32, height=dimensions[1] // 32 * 32,
                     steps=8, seed=seed, images=paths, **(dict(mask=mask_path) if mask_path else {}),
-                    path=self.output_path())
+                    **(dict(cast_view='back') if cast_view == 'back' else {}), path=self.output_path(named=True))
 
     def start(self, action, value):
         if action not in ('generate', 'compose'):
@@ -1065,6 +1164,14 @@ def register():
                 result = service.pack_action(name.split('-')[1], group='segment')
             elif name == 'segment':
                 result = await asyncio.to_thread(service.segment, value)
+            elif name == 'history':
+                result = service.history()
+            elif name == 'history-delete':
+                result = service.history_delete(value.get('file'))
+            elif name == 'history-open':
+                if request.remote not in ('127.0.0.1', '::1'):
+                    raise ValueError('invalid_request')
+                result = await asyncio.to_thread(service.history_open)
             else:
                 result = service.start(name, value)
             return web.json_response(result)

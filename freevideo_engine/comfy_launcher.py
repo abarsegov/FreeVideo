@@ -96,7 +96,7 @@ class Launcher:
             from .launcher_update import current_build, UpdateClient
             identity = current_build()
             if identity:
-                update_client = UpdateClient(identity, launcher_root())
+                update_client = UpdateClient(identity, launcher_root(), language='zh' if self.zh else 'en')
         if update_client is not None:
             from .launcher_update_ui import UpdateUI
             self.updates = UpdateUI(self, update_client, self.update_row)
@@ -587,9 +587,10 @@ class Launcher:
                 row['shortcut']['error'], '安装已完成，但无法创建桌面快捷方式。可继续使用启动器。\n' + row['shortcut']['error'])
         if self.error_text:
             self.copy_error_button.pack(side='left', padx=6)
+            self.report_error_button.pack(side='left', padx=6)
             self.review_card.pack(fill='x', pady=12)
         else:
-            self.copy_error_button.pack_forget(); self.review_card.pack_forget()
+            self.copy_error_button.pack_forget(); self.report_error_button.pack_forget(); self.review_card.pack_forget()
         self.review.configure(state='normal'); self.review.delete('1.0', 'end')
         self.review.insert('1.0', self.error_text)
         # Only as tall as the retained text, so a one-line failure is one line.
@@ -690,6 +691,12 @@ class Launcher:
         if self.error_text:
             self.window.clipboard_clear()
             self.window.clipboard_append(self.error_text)
+
+    def report_error(self):
+        if self.error_text:
+            from .launcher_issue import issue_url
+            from .windows_ux import open_browser
+            open_browser(issue_url(self.error_text, __version__, None, zh=self.zh))
 
     def show_details(self):
         dialog = self.tk.Toplevel(self.window); dialog.title(self.t('FreeVideo · Details', 'FreeVideo · 详情'))

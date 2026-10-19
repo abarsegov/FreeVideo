@@ -15,6 +15,7 @@ import { agentInterfaceEnabled } from './agent_connect.js';
 import { createUpdateNotice, createVersionInfo, productVersion } from './updates.js';
 import { createPortNotice } from './port_notice.js';
 import { reportIssue, reportTipClosed, showReportTip } from './report_issue.js';
+import { issueButton } from './issue_button.js';
 import { createPreviewScene } from './preview_scene.js?v=20260929-swell';
 import { animateDetails, closeDialog } from './motion.js';
 import { openLibrary } from './library.js';
@@ -677,7 +678,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             target.field.value = JSON.stringify(withCharacter(rows, card, typed));
             target.owner.graph?.change?.();
             window.dispatchEvent(new CustomEvent('freevideo-media', {detail: target.owner.id}));
-        }).catch(() => { if (!disposed) { status.dataset.error = 'true'; status.textContent = t('Could not add the character\'s pictures', '无法加入角色的图片'); } })
+        }).catch(() => { if (!disposed) fault(t('Could not add the character\'s pictures', '无法加入角色的图片')); })
             .finally(() => castPending.delete(person.id));
         return true;
     }
@@ -707,7 +708,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     openCastLibrary({api, text: t, viewURL: view, uploadOne: castUpload, onChange: () => { castOverlay.refresh(); references.refresh(); }})
         .then(library => { if (disposed) library?.destroy?.(); else castLibrary = library; });
     let requestAssets = null;
-    const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
+    const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter, issueButton,
         prepare: text => expandCast(text, mediaRows(node), {continued: Boolean(extension.source)}).text,
         // The rewrite has its own report; the video's report entry is not touched.
         onReport: row => { node.freevideoPromptReportId = row.rewrite_report_id || row.report_id; },
@@ -1172,6 +1173,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         progress.update(message);
     }
     const status = el('div', '', 'fv-status'); status.setAttribute('role', 'status');
+    // A fault in the status line carries the report button; the next text written to the line removes it.
+    const statusIssue = issueButton(t, () => ({where: ['Generate', '生成'], message: status.firstChild?.textContent}), {className: 'fv-status-issue'});
+    function fault(text) { status.dataset.error = 'true'; status.textContent = text; status.append(statusIssue); }
     const stats = el('div', null, 'fv-stats'), budget = el('div', '', 'fv-budget'), links = el('div', null, 'fv-result-links');
     stats.hidden = true;
     const metrics = [], metricLabels = [];
@@ -1192,7 +1196,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A browser extension gets the shared card; other failures stay in the status line.
     function resultActionFailed(error) {
         if (extensionCause(error)) { showQueueError(error); return; }
-        status.dataset.error = 'true'; status.textContent = shownMessage(error);
+        fault(shownMessage(error));
     }
     const trimNote = el('div', '', 'fv-note fv-trim-note'); trimNote.hidden = true; trimNote.setAttribute('role', 'status');
     // Run second pass is the preview's primary action in the result bar.
@@ -1646,7 +1650,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             held = turnNodeOn(node);
             const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(structuredClone(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
-            if (!snapshot) { status.textContent = t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。'); return; }
+            if (!snapshot) { fault(t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。')); return; }
             const seedIndex = node.widgets.findIndex(w => w.name === 'seed');
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;

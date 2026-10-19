@@ -2,6 +2,7 @@
 import gc
 import json
 from pathlib import Path
+import sys
 import time
 
 import torch
@@ -95,19 +96,21 @@ def parked_bytes(model):
 
 
 def release_encoder(clip, manager):
-    """Discard our Windows mapped encoder without a full GPU-to-CPU copy.
+    """Discard our mapped encoder without a full GPU-to-CPU copy.
 
     Native unpatching still releases pins, hooks and loaded-model registrations.
     Once the bank drops its references, unused tensors can die where they are;
     any other owner keeps valid tensors. Future encoding uses the mmap loader.
     """
     from .encoder_checkpoint import load_clip_model_patcher
-    from .system import windows
     def owned(patcher):
         factory = getattr(patcher, 'cached_patcher_init', None)
         return isinstance(factory, (tuple, list)) and bool(factory) and factory[0] is load_clip_model_patcher
     patcher = getattr(clip, 'patcher', None)
-    targets = [patcher] if windows() and owned(patcher) else []
+    # A native unpatch copies every weight to the CPU first: 13 GiB for the video text encoder,
+    # enough to exceed a machine's memory in the moment it was meant to make room. The Mac
+    # releases its encoder its own way (macos_encoder) and keeps the native path here.
+    targets = [patcher] if owned(patcher) and sys.platform != 'darwin' else []
     if targets:
         for loaded in manager.current_loaded_models:
             candidate = loaded.model

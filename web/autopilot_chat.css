@@ -125,13 +125,14 @@
 .fv-studio .fv-chat-down{position:absolute;right:max(40px,calc(50% - 360px));bottom:96px;width:34px;height:34px;min-height:0;padding:0;border-radius:50%;background:var(--fv-raised);box-shadow:0 6px 18px #0008}
 .fv-chat svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
 .fv-chat-input{box-sizing:border-box;justify-self:center;width:100%;max-width:720px;min-height:54px;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:end;border:1px solid var(--fv-border);background:#0e151e;border-radius:14px;padding:8px 8px 8px 16px;transition:border-color var(--fv-quick),box-shadow var(--fv-quick)}
-.fv-chat-notice{justify-self:center;width:100%;max-width:720px;margin:6px 0;font-size:14px;color:var(--fv-ink)}
+.fv-chat-notice-row{justify-self:center;width:100%;max-width:720px;display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px}.fv-chat-notice-row>.fv-issue-button{margin:6px 0}
+.fv-chat-notice{flex:0 1 auto;margin:6px 0;font-size:14px;color:var(--fv-ink)}
 .fv-chat-preview[data-loading=true] .fv-chat-play::before{border-color:var(--fv-accent);animation:fv-chat-breathe 1s infinite}
 .fv-chat-job:is([data-mode=failed],[data-mode=stopped]){display:block;width:100%}.fv-chat-job:is([data-mode=failed],[data-mode=stopped]) .fv-chat-actions{margin-top:10px;flex-wrap:wrap}
 .fv-studio .fv-chat-job:is([data-mode=failed],[data-mode=stopped]) .fv-result-links{justify-content:flex-start}
 .fv-chat-job .fv-report-tip{max-width:100%}
 .fv-chat-main{grid-template-rows:auto minmax(0,1fr) auto auto}
-.fv-chat-tools{grid-row:1}.fv-chat-scroll{grid-row:2}.fv-chat-notice{grid-row:3}.fv-chat-input{grid-row:4}
+.fv-chat-tools{grid-row:1}.fv-chat-scroll{grid-row:2}.fv-chat-notice-row{grid-row:3}.fv-chat-input{grid-row:4}
 .fv-chat-input:focus-within{border-color:var(--fv-accent-dim);box-shadow:0 0 0 3px color-mix(in srgb,var(--fv-accent) 13%,transparent)}
 .fv-studio.fv-autopilot .fv-chat-input textarea,.fv-chat-input textarea{box-sizing:border-box;width:100%;height:36px;min-height:36px;max-height:none;padding:7px 0;border:0;border-radius:0;background:none;color:var(--fv-ink);font-size:14.5px;line-height:22px;resize:none;outline:none;overflow-y:auto}
 .fv-chat-input textarea::placeholder{color:var(--fv-disabled)}
@@ -164,6 +165,9 @@
 /* Request errors use the card's existing actions and retry button. */
 .fv-chat-error{color:var(--fv-danger);font-size:13px;line-height:1.5;overflow-wrap:anywhere;margin:0}
 .fv-chat-new-error{padding:0 var(--fv-chats-pad) 6px}
+.fv-chat-delete-error{padding:0 var(--fv-chats-pad) 6px}
+.fv-chat-delete-error p{margin:0 0 4px}
+.fv-chat-delete-actions{display:flex;flex-wrap:wrap;gap:4px}
 .fv-chat-me>.fv-chat-actions{margin-top:6px;flex-wrap:wrap;justify-content:flex-end}
 .fv-chat-me .fv-chat-error{flex:1;min-width:0}
 .fv-chat-keep{white-space:nowrap}

@@ -146,9 +146,31 @@ def run(args):
         report.update(runtime_hardware=hardware, runtime_code=code_identity())
         print(json.dumps(dict(event='compute_device', backend='MPS', name=hardware['gpu_name'],
                               memory_model='unified', ram_total_bytes=hardware['ram_total'])), flush=True)
+        from .continuation import validate_frames, summary as continuation_summary
+        from . import macos_continuation
+        from .generate import hide_tail_geometry
+        if getattr(args, 'continue_from', None) is not None and args.frames is not None:
+            validate_frames(args.frames)
         canvas = geometry(args.width, args.height, frames=args.frames, seconds=args.seconds)
+        canvas, hide_tail = hide_tail_geometry(canvas,
+            Path(args.prompt_file).read_text(encoding='utf-8') if getattr(args, 'hide_tail', False) and args.prompt_file else None,
+            getattr(args, 'hide_tail', False), preview=bool(preview or refine_source))
+        hide_tail_frames = hide_tail['frames'] if hide_tail and hide_tail['used'] else 0
         from .media_request import read as read_media, task_for, cache_key, TASKS
         media = read_media(args.media)
+        from .two_pass import sampling_canvas
+        canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
+                                              conditioned=bool(args.conditioning))
+        continuation, media, continuation_details = macos_continuation.prepare(args, canvas, media, artifacts)
+        report.update(continuation_details)
+        if hide_tail is not None:
+            report['hide_tail'] = hide_tail
+        if continuation is not None:
+            report['continuation'] = continuation_summary(continuation, hide_tail_frames=hide_tail_frames)
+            report['audio_context'] = continuation['audio_context']
+        if hide_tail_frames:
+            report['output_frames'] = (report['continuation']['new_frames'] if continuation is not None
+                                       else canvas['frames'] - hide_tail_frames)
         structural = any(media.get(k) for k in ('first', 'last', 'references', 'conditioning_info'))
         task = args.task or task_for(media)
         if (args.task and structural and args.task != task_for(media)
@@ -163,13 +185,11 @@ def run(args):
             raise ValueError('Preencoded conditioning already includes media; use its conditioning_info')
         if args.prompt_file and task != 't2va' and not raw_media:
             raise ValueError('Native media encoding requires its input files')
-        # Too small to sample cleanly: render larger, scale the picture down.
-        from .two_pass import sampling_canvas
-        canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
-                                              conditioned=bool(args.conditioning))
         from .generate import upscale_factor
         sampling = plan(canvas, args.two_pass, task, base_steps=args.base_steps or 8, refine_steps=args.refine_steps,
                         staged=bool(preview or refine_source), scale=upscale_factor(args))
+        if continuation is not None and not sampling['enabled'] and sampling['base_steps'] != 8:
+            raise ValueError(sampling['reason'] + ' A continuation needs two-pass generation.')
         from .paths import base_path, checkpoint_path
         base = str(Path(args.base or base_path()).resolve())
         adapters = [row for row in media.get('loras', []) if row['strength'] != 0]
@@ -189,7 +209,7 @@ def run(args):
                             + conditioning_info.get('reference_audio_tokens', 0))
         admission = report['memory_admission'] = request_admission(resource, sampling, preview=preview,
                                                                   working_set_bytes=working_set,
-                                                                  reference_tokens=reference_tokens)
+                                                                  reference_tokens=reference_tokens, continuation=continuation)
         _check_admission(admission, sampling)
         if preview:
             report['preview'] = dict(geometry=dict(sampling['first'], fps=canvas['fps']))
@@ -217,6 +237,20 @@ def run(args):
                 prepared = json.loads(result_path.read_text(encoding='utf-8'))
                 prepared_cache = Path(prepared['cache']).resolve()
                 report['lora'] = prepared['report']
+            continuation = macos_continuation.freeze(continuation, canvas, sampling, prepared_cache, base, artifacts)
+            if continuation is not None:
+                report['continuation'] = continuation_summary(continuation, hide_tail_frames=hide_tail_frames)
+                if 'tail' in continuation:
+                    report['continuation']['context'] = 'encoded'
+                    refreshed = request_admission(resource, sampling, working_set_bytes=working_set,
+                        reference_tokens=reference_tokens, continuation=continuation)
+                    if refreshed['needed_bytes'] > admission['needed_bytes']:
+                        admission = report['memory_admission'] = refreshed
+                        _check_admission(admission, sampling)
+                media = macos_continuation.voice(continuation, media, continuation_details, artifacts)
+                task = (task_for(media) if continuation_details.get('voice_reference', {}).get('used')
+                        else args.task or task_for(media))
+                report['profile']['engine']['task'] = task
             conditioning = Path(args.conditioning).resolve() if args.conditioning else artifacts / 'conditioning.pt'
             if preview and args.conditioning:
                 # Keep the preview self-contained for its later upscale.
@@ -238,6 +272,12 @@ def run(args):
                 prompt = Path(args.prompt_file).read_text(encoding='utf-8')
                 if not prompt.strip():
                     raise ValueError('A nonempty prompt is required')
+                prompt_file = Path(args.prompt_file).resolve()
+                if report.get('first_frame_reference', {}).get('used'):
+                    from .continuation import first_frame_prompt
+                    prompt = first_frame_prompt(prompt)
+                    prompt_file = artifacts / 'encoder-prompt.txt'
+                    prompt_file.write_text(prompt, encoding='utf-8')
                 checkpoint = encoder_checkpoint(args)
                 library = Path(args.comfy_root or data_root() / 'vendor/h3-text-encoder').resolve()
                 cache = None if args.no_tuning else conditioning_cache(checkpoint, library)
@@ -245,7 +285,7 @@ def run(args):
                 metrics = cache.get(key, conditioning) if cache else None
                 if metrics is None:
                     report['encoding_resources'] = execute(dict(phase='encoding', root=str(data_root()),
-                        prompt_file=str(Path(args.prompt_file).resolve()), output=str(conditioning),
+                        prompt_file=str(prompt_file), output=str(conditioning),
                         report=str(output.with_suffix('.encoding.json')), checkpoint=str(checkpoint),
                         library=str(library), resources=resource, media=media, canvas=canvas, base=base), 'encoding')
                     metrics = json.loads(output.with_suffix('.encoding.json').read_text())
@@ -286,7 +326,8 @@ def run(args):
             if conditioning_tokens + reference_tokens > 1024 + admission['reference_tokens']:
                 report['memory_admission_before_encoding'] = admission
                 admission = report['memory_admission'] = request_admission(resource, sampling, preview=preview,
-                    working_set_bytes=working_set, reference_tokens=reference_tokens, text_tokens=text_tokens)
+                    working_set_bytes=working_set, reference_tokens=reference_tokens, text_tokens=text_tokens,
+                    continuation=continuation)
                 _check_admission(admission, sampling)
             report['phase'] = 'engine'
             save(output.with_suffix('.request.json'), report)
@@ -296,6 +337,10 @@ def run(args):
                 base=base, task=task,
                 checkpoint=str(Path(args.checkpoint or checkpoint_path()).resolve()),
                 seed=args.seed, canvas=canvas, sampling=sampling, resources=resource)
+            if continuation is not None:
+                engine['continuation'] = continuation
+            if hide_tail_frames:
+                engine['hide_tail_frames'] = hide_tail_frames
             if getattr(args, 'step_cache', None) == 'easycache-av':
                 engine['step_cache'] = args.step_cache
             if output_size:
@@ -312,6 +357,8 @@ def run(args):
                 raise RuntimeError('Native worker did not complete the requested video')
             if refine_source:
                 report['upscaled_preview'].update(metrics.get('upscaled_preview') or {})
+            if continuation is not None:
+                report['continuation']['audio_lead_in_samples'] = metrics.get('continuation', {}).get('audio_lead_in_samples', 0)
             report.update(success=True, phase='complete', video=metrics)
             return output
     except BaseException as error:

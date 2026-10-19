@@ -34,6 +34,7 @@ ApplicationWindow {
     property string previousStatus: ""
     property string previousReview: ""
     property bool compact: width < 1000
+    property bool narrow: width < 640
     property bool shortWindow: height < 700
     onModelInfoOpenChanged: if (modelInfoOpen) backend.prepareDownloadList()
     readonly property bool manualEnvironment: s.offline.runtime_supported !== false && s.form.new_comfy && s.form.environment_method === "manual"
@@ -258,29 +259,30 @@ ApplicationWindow {
     Rectangle {
         id: sidebar
         objectName: "sidebar"
-        width: win.compact ? 200 : 232
+        width: win.narrow ? 64 : win.compact ? 200 : 232
         anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.left: parent.left
         color: win.color
         Rectangle { width: 1; color: theme.border; anchors.right: parent.right; height: parent.height }
         ColumnLayout {
-            anchors.fill: parent; anchors.margins: 16; spacing: 4
+            anchors.fill: parent; anchors.margins: win.narrow ? 8 : 16; spacing: 4
             // The FreeVideo wordmark, as in the creative workspace header.
             Image {
                 objectName: "brandWordmark"
                 source: "../assets/wordmark.png"; fillMode: Image.PreserveAspectFit
+                visible: !win.narrow
                 Layout.preferredWidth: 150; Layout.preferredHeight: 25
                 Layout.topMargin: 14; Layout.leftMargin: 6; Layout.bottomMargin: 31
                 smooth: true; mipmap: true
                 Accessible.role: Accessible.Graphic; Accessible.name: "FreeVideo"
             }
-            FNav { objectName: "navLauncher"; glyph: "play"; text: t("Launch", "启动"); Layout.fillWidth: true; selected: s.page === "launcher"; enabled: s.selected && !s.busy; onClicked: backend.action("launcher", false) }
-            FNav { objectName: "navSetup"; glyph: "download"; text: t("Installation", "安装"); Layout.fillWidth: true; selected: s.page !== "launcher"; enabled: s.can_manage && !s.portable; onClicked: backend.action("setup", false) }
+            FNav { objectName: "navLauncher"; glyph: "play"; text: t("Launch", "启动"); iconOnly: win.narrow; Layout.fillWidth: true; selected: s.page === "launcher"; enabled: s.selected && !s.busy; onClicked: backend.action("launcher", false) }
+            FNav { objectName: "navSetup"; glyph: "download"; text: t("Installation", "安装"); iconOnly: win.narrow; Layout.fillWidth: true; selected: s.page !== "launcher"; enabled: s.can_manage && !s.portable; onClicked: backend.action("setup", false) }
             Item { Layout.fillHeight: true }
             Rectangle {
                 Layout.fillWidth: true; Layout.bottomMargin: 8; implicitHeight: busyBody.implicitHeight + 28
                 radius: theme.radiusMd; color: theme.surface; border.color: theme.border
                 // Waiting for the person to confirm the plan is not work in progress.
-                opacity: s.working ? 1 : 0; visible: opacity > 0
+                opacity: s.working ? 1 : 0; visible: !win.narrow && opacity > 0
                 Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 ColumnLayout {
                     id: busyBody; x: 14; y: 14; width: parent.width - 28; spacing: 8
@@ -293,10 +295,11 @@ ApplicationWindow {
                     FText { text: s.overall.label || t("Preparing…", "正在准备…"); font.pixelSize: theme.micro; color: theme.muted; Layout.fillWidth: true; maximumLineCount: 1; elide: Text.ElideRight }
                 }
             }
-            FNav { glyph: "terminal"; text: t("Terminal", "终端"); Layout.fillWidth: true; selected: terminalOpen; onClicked: terminalOpen = !terminalOpen }
-            FNav { objectName: "settingsButton"; glyph: "settings"; text: t("Settings", "设置"); Layout.fillWidth: true; onClicked: settingsOpen = true }
+            FNav { glyph: "terminal"; text: t("Terminal", "终端"); iconOnly: win.narrow; Layout.fillWidth: true; selected: terminalOpen; onClicked: terminalOpen = !terminalOpen }
+            FNav { objectName: "settingsButton"; glyph: "settings"; text: t("Settings", "设置"); iconOnly: win.narrow; Layout.fillWidth: true; onClicked: settingsOpen = true }
             FButton {
                 id: versionInfoButton; objectName: "versionInfoButton"
+                visible: !win.narrow
                 text: (separateVersions ? t("Launcher ", "启动器 ") : "") + releaseVersion(currentRelease)
                 flat: true; font.pixelSize: 11; Layout.topMargin: 12
                 Accessible.name: t("Version & release notes", "版本与更新说明")
@@ -324,16 +327,16 @@ ApplicationWindow {
                 id: steps
                 objectName: "setupSteps"
                 visible: s.page !== "launcher"
-                spacing: win.compact ? 8 : 12
+                spacing: win.narrow ? 4 : win.compact ? 8 : 12
                 anchors.verticalCenter: parent.verticalCenter
-                x: Math.max(20, Math.min((parent.width - width) / 2, headerTools.x - width - 16))
+                x: win.narrow ? 12 : Math.max(20, Math.min((parent.width - width) / 2, headerTools.x - width - 16))
                 Repeater {
                     model: [t("ComfyUI", "ComfyUI"), t("Models", "模型"), t("Install", "安装")]
                     delegate: Row {
                         required property string modelData; required property int index
-                        spacing: win.compact ? 8 : 12
+                        spacing: win.narrow ? 4 : win.compact ? 8 : 12
                         Item {
-                            visible: index > 0; width: win.compact ? 14 : 32; height: 2; anchors.verticalCenter: parent.verticalCenter
+                            visible: index > 0; width: win.narrow ? 8 : win.compact ? 14 : 32; height: 2; anchors.verticalCenter: parent.verticalCenter
                             Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 1; color: theme.border }
                             Rectangle {
                                 anchors.verticalCenter: parent.verticalCenter; height: 1; color: theme.accentDim
@@ -342,7 +345,7 @@ ApplicationWindow {
                             }
                         }
                         Row {
-                            spacing: 8; anchors.verticalCenter: parent.verticalCenter
+                            spacing: win.narrow ? 4 : 8; anchors.verticalCenter: parent.verticalCenter
                             Rectangle {
                                 width: 20; height: 20; radius: 10; anchors.verticalCenter: parent.verticalCenter
                                 color: index < win.step ? theme.accentSubtle : index === win.step ? theme.accent : "transparent"
@@ -353,7 +356,7 @@ ApplicationWindow {
                                 FText { anchors.centerIn: parent; text: index < win.step ? "✓" : String(index + 1); font.pixelSize: 11; font.weight: Font.DemiBold
                                         color: index === win.step ? theme.bg : index < win.step ? theme.accent : theme.muted }
                             }
-                            FText { anchors.verticalCenter: parent.verticalCenter; text: modelData; font.pixelSize: theme.micro + 1
+                            FText { visible: !win.narrow || index === win.step; anchors.verticalCenter: parent.verticalCenter; text: modelData; font.pixelSize: theme.micro + 1
                                     font.weight: index === win.step ? Font.DemiBold : Font.Normal; color: index === win.step ? theme.text : theme.muted }
                         }
                     }
@@ -361,7 +364,7 @@ ApplicationWindow {
             }
             Row {
                 id: headerTools
-                anchors.right: parent.right; anchors.rightMargin: 20; anchors.verticalCenter: parent.verticalCenter
+                anchors.right: parent.right; anchors.rightMargin: win.narrow ? 12 : 20; anchors.verticalCenter: parent.verticalCenter
                 spacing: 12
                 Rectangle {
                     visible: s.status === "open"; anchors.verticalCenter: parent.verticalCenter
@@ -393,7 +396,7 @@ ApplicationWindow {
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 id: page
-                width: Math.min(scroll.availableWidth - (win.compact ? 36 : 64), 820)
+                width: Math.min(scroll.availableWidth - (win.narrow ? 24 : win.compact ? 36 : 64), 820)
                 x: (scroll.availableWidth-width)/2
                 spacing: shortWindow ? 14 : 20
                 transform: Translate { id: pageShift }
@@ -446,6 +449,7 @@ ApplicationWindow {
                                       text: t("Download the latest ↗", "下载最新版 ↗"); onClicked: backend.link("https://github.com/FlashML-org/FreeVideo/releases/latest") }
                             FButton { objectName: "copyError"; visible: !diskFailure; text: t("Copy details", "复制详情"); onClicked: backend.copy(s.error) }
                             FButton { objectName: "showError"; text: errorDetailsOpen ? t("Hide details", "收起详情") : t("Show details", "查看详情"); flat: true; onClicked: errorDetailsOpen = !errorDetailsOpen }
+                            FButton { objectName: "reportProblem"; visible: !diskFailure; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(s.error, s.failure.title || "") }
                             FButton { objectName: "exportError"; visible: !diskFailure; text: t("Export report", "导出报告"); enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                         }
                         ScrollView {
@@ -735,11 +739,11 @@ ApplicationWindow {
                     ColumnLayout {
                         visible: s.status === "review"; Layout.fillWidth: true; spacing: 12
                         GridLayout {
-                            Layout.fillWidth: true; columns: 2; columnSpacing: 16; rowSpacing: 8
+                            Layout.fillWidth: true; columns: win.narrow ? 1 : 2; columnSpacing: 16; rowSpacing: win.narrow ? 2 : 8
                             FText { text: "ComfyUI"; color: theme.muted; font.pixelSize: theme.micro + 1 }
-                            FText { text: s.review.comfy; font.pixelSize: theme.micro + 1; Layout.fillWidth: true; elide: Text.ElideMiddle; maximumLineCount: 1 }
+                            FText { text: s.review.comfy; font.pixelSize: theme.micro + 1; Layout.fillWidth: true; elide: Text.ElideMiddle; maximumLineCount: 1; wrapMode: Text.NoWrap }
                             FText { text: "FreeVideo"; color: theme.muted; font.pixelSize: theme.micro + 1 }
-                            FText { text: s.review.engine; font.pixelSize: theme.micro + 1; Layout.fillWidth: true; elide: Text.ElideMiddle; maximumLineCount: 1 }
+                            FText { text: s.review.engine; font.pixelSize: theme.micro + 1; Layout.fillWidth: true; elide: Text.ElideMiddle; maximumLineCount: 1; wrapMode: Text.NoWrap }
                         }
                         Rectangle { Layout.fillWidth: true; height: 1; color: theme.border }
                         ColumnLayout {
@@ -754,7 +758,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true; spacing: 4
                                     FText {
                                         objectName: "replaceModel-" + replacement.index
-                                        text: replacement.modelData.text; font.pixelSize: theme.micro + 1; Layout.fillWidth: true
+                                        text: replacement.modelData.text.replace(/(\d) (GiB|MiB)/g, "$1\u00a0$2"); font.pixelSize: theme.micro + 1; Layout.fillWidth: true
                                     }
                                     FText {
                                         objectName: "replaceModelPath-" + replacement.index
@@ -795,7 +799,7 @@ ApplicationWindow {
                                     FText { text: modelData.detail; font.pixelSize: theme.micro; Layout.fillWidth: true; color: modelData.state === "ready" ? theme.success : theme.muted }
                                 }
                                 // What this group downloads, as in the plan; nothing for one already here.
-                                FText { objectName: "modelSize-" + modelData.id; visible: modelData.download > 0; text: bytes(modelData.download); font.pixelSize: theme.micro; color: theme.muted; font.features: { "tnum": 1 } }
+                                FText { objectName: "modelSize-" + modelData.id; visible: modelData.download > 0; text: bytes(modelData.download).replace(" ", "\u00a0"); font.pixelSize: theme.micro; color: theme.muted; font.features: { "tnum": 1 } }
                                 FButton { objectName: "modelFiles-" + modelData.id; text: downloads.copy.title + "  ›"; implicitHeight: theme.heightSm; flat: true; font.pixelSize: theme.micro + 1; visible: s.form.model_method === "manual"; onClicked: modelInfoOpen = true }
                             }
                         }
@@ -830,6 +834,7 @@ ApplicationWindow {
                         FText { visible: !s.update.phase && !!text; text: releaseSummary(availableRelease); Layout.fillWidth: true; color: theme.muted; font.pixelSize: theme.micro }
                         FButton { text: t("What's new", "更新内容"); flat: true; visible: !s.update.phase && !!availableRelease; implicitHeight: theme.heightSm; onClicked: releaseNotesOpen = true }
                         FButton { objectName: "updateBannerManualDownload"; text: t("Download from the release page ↗", "去发布页手动下载 ↗"); flat: true; visible: s.update.status === "error" && !!s.update.release_page; implicitHeight: theme.heightSm; onClicked: backend.link(s.update.release_page) }
+                        FButton { objectName: "updateBannerReport"; text: t("Report a problem", "提交问题"); flat: true; visible: s.update.status === "error" && !!s.update.error; implicitHeight: theme.heightSm; onClicked: backend.reportProblem(s.update.error, t("Update", "更新")) }
                     }
                     FCard {
                         objectName: "modelUpgradeCard"
@@ -848,6 +853,7 @@ ApplicationWindow {
                             FButton { objectName: "modelUpgradeLater"; visible: ["available", "low-disk", "releasable", "complete", "failed"].indexOf(upgrade.status) >= 0; flat: true
                                       text: upgrade.status === "complete" || upgrade.status === "low-disk" ? t("Close", "关闭") : t("Later", "稍后"); onClicked: backend.dismissModelUpgrade() }
                             FButton { objectName: "modelUpgradeStop"; visible: upgrade.status === "downloading"; flat: true; text: t("Stop download", "停止下载"); onClicked: backend.cancelModelUpgrade() }
+                            FButton { objectName: "modelUpgradeReport"; visible: upgrade.status === "failed"; flat: true; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(upgradeExplanation(), t("Model upgrade", "模型升级")) }
                             FButton {
                                 objectName: "modelUpgradeButton"; primary: true
                                 visible: upgrade.status === "available" || upgrade.status === "releasable"
@@ -951,6 +957,7 @@ ApplicationWindow {
                             FButton { objectName: "imagePackRemove"; visible: s.image_pack.removable_bytes > 0 && !s.image_pack.busy; text: t("Remove", "删除"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("remove") }
                         }
                         FText { objectName: "imagePackFailureReason"; visible: s.image_pack.install.state === "failed"; text: s.image_pack.detail; color: theme.danger; Layout.fillWidth: true }
+                        FButton { objectName: "imagePackReport"; visible: s.image_pack.install.state === "failed"; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(s.image_pack.detail || "", t("Image pack", "图像模型包")) }
                         Flow {
                             visible: s.image_pack.install.state === "failed" && !!s.image_pack.report_id
                             Layout.fillWidth: true; spacing: 8
@@ -965,7 +972,7 @@ ApplicationWindow {
                         objectName: "promptModelCard"
                         visible: !!s.prompt_model && !s.prompt_model.ready && (s.prompt_model.suggest || s.prompt_model.busy || s.prompt_model.checking
                                  || ["failed", "cancelled"].indexOf(s.prompt_model.install.state) >= 0)
-                        Layout.fillWidth: true; padding: 16; spacing: 10
+                        Layout.fillWidth: true; padding: 22; spacing: 10
                         FText {
                             objectName: "promptModelText"; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             text: win.promptModelLine()
@@ -980,6 +987,7 @@ ApplicationWindow {
                                 text: s.prompt_model.suggest ? t("Download", "下载") : t("Resume", "继续"); enabled: !s.busy; onClicked: backend.promptModelAction("install") }
                             FButton { objectName: "promptModelPause"; visible: s.prompt_model.busy; text: t("Pause", "暂停"); onClicked: backend.promptModelAction("cancel") }
                             FButton { objectName: "promptModelDismiss"; visible: s.prompt_model.suggest; text: t("Don't ask again", "不再提示"); flat: true; onClicked: backend.dismissPromptHint() }
+                            FButton { objectName: "promptModelReport"; visible: s.prompt_model.install.state === "failed"; text: t("Report a problem", "提交问题"); flat: true; onClicked: backend.reportProblem(win.promptModelLine(), t("Prompt model", "提示词模型")) }
                         }
                     }
                 }
@@ -988,18 +996,62 @@ ApplicationWindow {
             }
         }
         Rectangle {
-            id: footer; height: shortWindow ? 64 : 76; anchors.bottom: parent.bottom; width: parent.width; color: theme.canvas
+            id: footer; objectName: "footer"
+            height: win.narrow ? (narrowActions.twoRows ? 112 : 64) : shortWindow ? 64 : 76
+            anchors.bottom: parent.bottom; width: parent.width; color: theme.canvas
             Rectangle { height: 1; width: parent.width; color: theme.border }
             RowLayout {
+                visible: !win.narrow
                 anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 24; spacing: 10
-                FButton { objectName: "backButton"; text: t("Back", "上一步"); flat: true; visible: s.page === "models" || s.page === "progress"; enabled: !s.busy; onClicked: backend.action("back", false) }
+                FButton { objectName: win.narrow ? "" : "backButton"; text: t("Back", "上一步"); flat: true; visible: s.page === "models" || s.page === "progress"; enabled: !s.busy; onClicked: backend.action("back", false) }
                 Item { Layout.fillWidth: true }
                 FButton { visible: s.busy && !s.cleanup.busy; text: t("Pause", "暂停"); onClicked: backend.action("stop", false) }
+                FButton { objectName: win.narrow ? "" : "launchInstalledButton"; visible: updateFirst && s.retry_kind !== "launch"; flat: true; text: t("Launch current version", "启动当前版本"); onClicked: backend.action("primary", accepted) }
+                FButton {
+                    objectName: win.narrow ? "" : "primaryButton"; primary: !s.repair_offered && !(s.retry_kind === "launch" && engineUpdate.visible) && !manualFailure; implicitWidth: Math.max(160, contentItem.implicitWidth+40); implicitHeight: theme.heightLg
+                    text: s.setup_pending ? s.setup_wait_text : s.busy ? t("Working…", "正在处理…") : primaryText()
+                    enabled: !s.busy && !s.setup_pending && !(s.page === "launcher" && s.needs_consent && !accepted)
+                             && !(s.page === "progress" && s.status === "review" && !s.retry_kind && (!accepted || !!s.error))
+                    onClicked: { if (s.retry_kind) { backend.action("retry", accepted); return } if (needsRuntime) { backend.browseRuntimePackage(); return } if (needsPackages) { backend.browsePackages(); return } if (updateFirst) { backend.update(""); return } backend.action(s.page === "launcher" && s.status === "open" ? "browser" : "primary", accepted) }
+                }
+            }
+            Item {
+                id: narrowActions
+                visible: win.narrow
+                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                // Reserve another row only when the optional launch action needs it.
+                readonly property bool twoRows: launchInstalled.visible &&
+                    (backButton.visible ? backButton.width + 8 : 0) +
+                    (pauseButton.visible ? pauseButton.width + 8 : 0) +
+                    launchInstalled.width + 8 + primaryButton.implicitWidth > width
+                FButton {
+                    id: backButton; objectName: win.narrow ? "backButton" : ""
+                    anchors.left: parent.left; y: narrowActions.twoRows ? 10 : (parent.height - height) / 2
+                    text: t("Back", "上一步"); flat: true; visible: s.page === "models" || s.page === "progress"; enabled: !s.busy; onClicked: backend.action("back", false)
+                }
+                FButton {
+                    id: pauseButton; anchors.left: backButton.visible ? backButton.right : parent.left; anchors.leftMargin: backButton.visible ? 8 : 0
+                    y: (parent.height - height) / 2
+                    visible: s.busy && !s.cleanup.busy; text: t("Pause", "暂停"); onClicked: backend.action("stop", false)
+                }
                 // After a failed start, "Retry launch" already starts the installed version: one button, and the update banner leads.
                 // Other retries (an import) start something else, so this one stays.
-                FButton { objectName: "launchInstalledButton"; visible: updateFirst && s.retry_kind !== "launch"; flat: true; text: t("Launch current version", "启动当前版本"); onClicked: backend.action("primary", accepted) }
                 FButton {
-                    objectName: "primaryButton"; primary: !s.repair_offered && !(s.retry_kind === "launch" && engineUpdate.visible) && !manualFailure; implicitWidth: Math.max(160, contentItem.implicitWidth+40); implicitHeight: theme.heightLg
+                    id: launchInstalled; objectName: win.narrow ? "launchInstalledButton" : ""
+                    anchors.right: narrowActions.twoRows ? parent.right : primaryButton.left; anchors.rightMargin: narrowActions.twoRows ? 0 : 8
+                    y: narrowActions.twoRows ? 10 : (parent.height - height) / 2
+                    visible: updateFirst && s.retry_kind !== "launch"; flat: true; text: t("Launch current version", "启动当前版本"); onClicked: backend.action("primary", accepted)
+                }
+                FButton {
+                    id: primaryButton; objectName: win.narrow ? "primaryButton" : ""
+                    anchors.right: parent.right; y: narrowActions.twoRows ? parent.height - height - 10 : (parent.height - height) / 2
+                    primary: !s.repair_offered && !(s.retry_kind === "launch" && engineUpdate.visible) && !manualFailure
+                    leftPadding: 12; rightPadding: 12
+                    singleLine: true
+                    implicitWidth: Math.max(120, contentItem.implicitWidth + leftPadding + rightPadding); implicitHeight: theme.heightLg
+                    width: Math.min(implicitWidth, Math.max(0, narrowActions.width - (narrowActions.twoRows ? 0 :
+                        (backButton.visible ? backButton.width + 8 : 0) + (pauseButton.visible ? pauseButton.width + 8 : 0) +
+                        (launchInstalled.visible ? launchInstalled.width + 8 : 0))))
                     text: s.setup_pending ? s.setup_wait_text : s.busy ? t("Working…", "正在处理…") : primaryText()
                     enabled: !s.busy && !s.setup_pending && !(s.page === "launcher" && s.needs_consent && !accepted)
                              && !(s.page === "progress" && s.status === "review" && !s.retry_kind && (!accepted || !!s.error))
@@ -1399,6 +1451,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true; spacing: 8
                                 FButton { text: t("Copy details", "复制详情"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.copy(s.error) }
                                 FButton { text: t("Export report", "导出报告"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
+                                FButton { objectName: "settingsReportProblem"; text: t("Report a problem", "提交问题"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.reportProblem(s.error, s.failure.title || "") }
                             }
                             FText {
                                 visible: s.report.status !== "idle"; Layout.fillWidth: true; font.pixelSize: theme.micro; color: theme.muted
@@ -1659,6 +1712,7 @@ ApplicationWindow {
             FButton { text: t("Version & release notes", "版本与更新说明"); flat: true; onClicked: releaseNotesOpen = true }
             FText { visible: !!s.update.error; text: s.update.error || ""; color: theme.danger; Layout.fillWidth: true; font.pixelSize: theme.micro }
             FButton { objectName: "updateManualDownloadButton"; text: t("Download from the release page ↗", "去发布页手动下载 ↗"); flat: true; Layout.fillWidth: true; visible: s.update.status === "error" && !!s.update.release_page; onClicked: backend.link(s.update.release_page) }
+            FButton { objectName: "updateDialogReport"; text: t("Report a problem", "提交问题"); flat: true; Layout.fillWidth: true; visible: s.update.status === "error" && !!s.update.error; onClicked: backend.reportProblem(s.update.error, t("Update", "更新")) }
             }
             }
             RowLayout {

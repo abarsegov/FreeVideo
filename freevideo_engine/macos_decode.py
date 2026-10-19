@@ -28,8 +28,25 @@ def tile_group_size(allocator_bytes, *, cache_weights=True):
     return 4 if cache_weights and allocator_bytes >= 4 * 2**30 and not limits['resident_bytes'] else 0
 
 
+def trim_decoded(frames, audio, continuation=None, *, hide_tail_frames=0, sample_rate=32000,
+                 audio_lead_in_callback=None):
+    """The shared seam clocks, applied before saving either decoded artifact."""
+    from .continuation import validate_hide_tail, capture_audio_lead_in, trim_output
+    validate_hide_tail(hide_tail_frames)
+    if continuation is not None and audio_lead_in_callback is not None:
+        audio_lead_in_callback(capture_audio_lead_in(audio, continuation, sample_rate))
+    if hide_tail_frames:
+        kept_frames = len(frames) - hide_tail_frames
+        frames = frames[:kept_frames]
+        audio = audio[:, :round(kept_frames * 40 / 24) * 800]
+    return trim_output(frames, audio, continuation)
+
+
 def decode_to_file(latents, audio_latents, output, *, base, artifacts_dir,
-                   budget_bytes=4 * 2**30, reserve_bytes=2 * 2**30, cache_weights=True, output_size=None):
+                   budget_bytes=4 * 2**30, reserve_bytes=2 * 2**30, cache_weights=True, output_size=None,
+                   continuation=None, hide_tail_frames=0, audio_lead_in_callback=None):
+    from .continuation import validate_hide_tail
+    validate_hide_tail(hide_tail_frames)
     if type(cache_weights) is not bool:
         raise ValueError('Decoder weight caching must be explicitly enabled or disabled')
     from .macos_vdn import activate
@@ -53,6 +70,7 @@ def decode_to_file(latents, audio_latents, output, *, base, artifacts_dir,
     started = time.monotonic()
     vae = video_decoder = audio_vae = frames = mapping = None
     handles, specs = [], []
+    completed = False
     def phase(text):
         print(json.dumps(dict(event='decode_phase', phase=text)), flush=True)
     def guard(module, inputs):
@@ -118,6 +136,10 @@ def decode_to_file(latents, audio_latents, output, *, base, artifacts_dir,
             if not bool(audio.isfinite().all()):
                 raise ValueError('MPS audio decoder produced nonfinite samples')
             rate = audio_vae.config.sampling_rate
+            frames, audio = trim_decoded(frames, audio, continuation, hide_tail_frames=hide_tail_frames,
+                sample_rate=rate, audio_lead_in_callback=audio_lead_in_callback)
+            if continuation is not None or hide_tail_frames:
+                np.save(artifacts_dir / 'rgb-new.npy', frames, allow_pickle=False)
             np.save(artifacts_dir / 'audio.npy', audio.numpy(), allow_pickle=False)
             audio_vae = None
             del mean, std
@@ -134,6 +156,7 @@ def decode_to_file(latents, audio_latents, output, *, base, artifacts_dir,
             else:
                 encode_video(frames, fps=FPS, output_path=str(temporary), audio=audio, audio_sample_rate=rate)
             temporary.replace(output)
+            completed = True
             return dict(device_backend='mps', output=str(output), frames=len(frames),
                 audio_sample_rate=rate, audio_shape=list(audio.shape), elapsed_seconds=time.monotonic()-started,
                 policy=policy, video_residency=video_residency, audio_loading=audio_loading, timings=timings,
@@ -146,5 +169,7 @@ def decode_to_file(latents, audio_latents, output, *, base, artifacts_dir,
         vae = video_decoder = audio_vae = frames = None
         if mapping is not None:
             mapping._mmap.close()
+        if completed and (continuation is not None or hide_tail_frames):
+            (artifacts_dir / 'rgb-new.npy').replace(artifacts_dir / 'rgb.npy')
         gc.collect()
         backend.empty_cache()

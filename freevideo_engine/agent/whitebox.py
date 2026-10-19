@@ -127,6 +127,18 @@ class Whitebox:
             self._save(record)
             return self.view(record)
 
+    def open_for(self, session):
+        """The scenes this conversation started that are still being made, or failed without the user being told."""
+        with self.lock:
+            rows = []
+            for record in sorted(self.records.values(), key=lambda r: r['created_at']):
+                self._expire(record)
+                if record.get('session') == session and record.get('notice') and record['status'] != 'ready' \
+                        and self.clock() - record['created_at'] < 1800:
+                    rows.append(dict(id=record['id'], status=record['status'], summary=record['summary'],
+                                     **(dict(error=record['error']) if record['status'] == 'failed' else {})))
+            return rows
+
     def take_notice(self, identity):
         """What the server should tell the user's conversation once the scene is ready; handed out once."""
         with self.lock:

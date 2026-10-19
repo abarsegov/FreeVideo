@@ -4,6 +4,7 @@ import { resultActions, previewBadge, icon } from './result_actions.js';
 import { videoUnavailableText } from './studio_extend.js';
 import { topDialog } from './dialog_keys.js';
 import { isNetworkTypeError, connectionLostText } from './browser_extension.js';
+import { issueButton } from './issue_button.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./library.css', import.meta.url).href; document.head.append(style);
@@ -165,6 +166,10 @@ async function workflowBackfill(collection, t) {
 export function openLibrary(t, {upscale = null, selectedWork = null, extend = null, back: backLabel = null} = {}) {
     if (opened?.open) { if (selectedWork) opened.close(); else { opened.focus(); return; } }
     const dialog = el('dialog', null, 'fv-studio fv-library'); opened = dialog;
+    const fault = (target, text, where = ['Creations', '作品库']) => {
+        target.textContent = text;
+        target.append(issueButton(t, () => ({where, message: text})));
+    };
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
     const header = el('header', null, 'fv-library-header');
     // Closing returns to the view this was opened from; that view names itself on the button.
@@ -243,6 +248,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         player.addEventListener('error', event => {
             if (!disposed && selected === row.video && event.currentTarget === player) {
                 const note = el('p', videoUnavailableText(t), 'fv-library-message');
+                fault(note, videoUnavailableText(t));
                 frame.replaceChildren(note);
             }
         }, {once: true});
@@ -264,7 +270,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
                         if (editor && !disposed) { dialog.close(); editor.element?.focus({preventScroll: true}); }
                         return editor;
                     }
-                    catch (error) { notice.textContent = error.message; }
+                    catch (error) { fault(notice, error.message, ['Continue video', '延长视频']); }
                 },
                 secondPass: row.preview && upscale ? () => secondPass(row) : null,
                 remove: () => remove(row)}));
@@ -297,7 +303,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             await upscale(row);
             if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后在“作品”里。');
         } catch (error) {
-            if (!disposed && selected === row.video) notice.textContent = t('Could not start the second pass: ', '无法继续二采：') + error.message;
+            if (!disposed && selected === row.video) fault(notice, t('Could not start the second pass: ', '无法继续二采：') + error.message, ['Second pass', '二采']);
             throw error;
         }
     }
@@ -314,13 +320,15 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             if (!response.ok || !value.deleted) throw new Error(value.reason || 'failed');
         } catch (error) {
             if (!disposed && selected === row.video) mountPlayer(row);
-            throw new Error(error.message === 'foreign-files'
+            throw Object.assign(new Error(error.message === 'foreign-files'
                 ? t('Not deleted: the folder also holds files FreeVideo did not write: ', '未删除：文件夹里还有不是 FreeVideo 生成的文件：') + (value.kept || []).join(', ')
                 : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
                 : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
                 : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请等它完成后再试。')
                 : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
-                : t('Could not delete this creation.', '无法删除这条作品。'));
+                : t('Could not delete this creation.', '无法删除这条作品。')), {
+                    reportable: !['foreign-files', 'editor-in-use', 'continuation-in-use', 'in-use'].includes(error.message),
+                });
         }
         // Other views of the library (the studio's Recent videos) drop it too.
         window.dispatchEvent(new CustomEvent('freevideo-library-deleted', {detail: {video: row.video}}));
@@ -470,6 +478,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         if (disposed) return;
         const live = offeredUndoRows(), deletedCount = live.reduce((sum, row) => sum + row.count, 0);
         const notes = [undoNote ? el('span', undoNote, 'fv-library-skipped') : null, undoFailure ? el('span', undoFailure, 'fv-library-skipped') : null].filter(Boolean);
+        if (undoFailure) notes.push(issueButton(t, () => ({where: ['Delete or restore creations', '删除或恢复作品'], message: undoFailure})));
         const settle = () => { if (undoRows().length) { showUndo(); return; } undoNote = null; undoFailure = ''; undoBar.replaceChildren(); undoBar.hidden = true; };
         undoBar.replaceChildren(); undoBar.hidden = !deletedCount && !notes.length;
         if (!deletedCount) { undoBar.append(...notes); return; }
@@ -500,6 +509,10 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             undoFailure = '';
             undoBar.replaceChildren(el('span', expired ? t('The undo time has passed.', '已过了撤销时间。')
                 : lost ? t(`Restored, but ${lost} could not be brought back.`, `已恢复，其中 ${lost} 个没能恢复。`) : t('Restored.', '已恢复。')));
+            if (lost && !expired) {
+                const message = undoBar.firstElementChild.textContent;
+                undoBar.append(issueButton(t, () => ({where: ['Restore creations', '恢复作品'], message})));
+            }
             undoTimer = setTimeout(settle, 4000);
             load(false);
         }, 'fv-quiet');
@@ -661,7 +674,12 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             } else select(rows.get(selected), false);
             ok = true; regroup();
             if (selectedWork) { const row = [...rows.values()].find(row => row.id === selectedWork || row.video === selectedWork); if (row) { select(row); selectedWork = null; } else if (next) queueMicrotask(() => load(true)); }
-        } catch (error) { if (!disposed && error.name !== 'AbortError') message.textContent = isNetworkTypeError(error) ? connectionLostText(t) : error.message; }
+        } catch (error) {
+            if (!disposed && error.name !== 'AbortError') {
+                if (error.restart) message.textContent = error.message;
+                else fault(message, isNetworkTypeError(error) ? connectionLostText(t) : error.message);
+            }
+        }
         finally { if (!disposed) { loading = false; refresh.disabled = more.disabled = false; } }
         return ok;
     }

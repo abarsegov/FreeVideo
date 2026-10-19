@@ -8,10 +8,12 @@ import { estimatedFraction, remainingAbove, remainingShown, createDiagnosticRepo
 import {createErrorReport} from './error_panel.js';
 import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 import {renderImageFailure} from './image_generation.js';
+import {issueButton} from './issue_button.js';
 import {about} from './request_assets.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
+const CHAT_ISSUE = ['Chat', '对话'];
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function glyph(path, width = 2.2) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -291,27 +293,39 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     let sceneRows = null, entryScene = initialScene || null, sceneWaiting = false;
     function toggleScenes(open = sceneMenu.hidden) {
         sceneMenu.hidden = !open; scenesButton.setAttribute('aria-expanded', String(open));
-        if (!open || sceneRows) return;
+        if (!open) return;
+        // One ready-made scene needs no choosing: the button starts it.
+        if (sceneRows?.length === 1) { toggleScenes(false); void runScene(sceneRows[0].id); return; }
+        if (sceneRows) return;
         sceneRows = [];
         void sceneList(api).then(rows => {
-            sceneRows = rows; sceneMenu.replaceChildren(...rows.map(row => {
+            sceneRows = rows;
+            if (rows.length === 1 && !sceneMenu.hidden) { toggleScenes(false); void runScene(rows[0].id); return; }
+            sceneMenu.replaceChildren(...rows.map(row => {
                 const item = press('fv-chat-scene-item', row.name, () => { toggleScenes(false); void runScene(row.id); });
                 item.setAttribute('role', 'menuitem'); return item;
             }));
         }).catch(() => { sceneRows = null; toggleScenes(false); say(t(...SCENE_TEXT.failed) + t('Connection lost. Try again.', '连接中断，请重试。')); });
     }
     async function runScene(preset, session = state.session) {
-        if (!session || stopped) return;
+        if (!session || stopped || sceneWaiting) return;
         say(t(...SCENE_TEXT.preparing)); sceneWaiting = true;
         try {
             const id = await startScene(api, preset, session);
-            const result = id ? await watchScene(api, id, {stopped: () => stopped}) : {status: 'ready'};
-            if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '')); }
-            else if (result.status === 'timeout') { sceneWaiting = false; say(''); }
+            const result = id ? await watchScene(api, id, {stopped: () => stopped, onState: value => { if (value.status === 'rendering') say(t(...SCENE_TEXT.rendering)); }}) : {status: 'ready'};
+            if (result.status === 'failed') {
+                sceneWaiting = false; const why = (result.error || '').replace(/[.。]+$/, '');
+                say(why ? t(...SCENE_TEXT.failed) + why + t(...SCENE_TEXT.retry) : t(...SCENE_TEXT.bare));
+            }
+            else if (result.status === 'timeout') {
+                sceneWaiting = false;
+                say(t(...(result.last === 'rendering' ? SCENE_TEXT.timeout : result.page_open ? SCENE_TEXT.notStarted : SCENE_TEXT.noPage)));
+            }
         } catch (failure) { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + reason(failure)); }
     }
     form.append(input, scenesButton, whiteboxButton, sendButton); scroller.append(log); main.append(scroller, down, sceneMenu, form); element.append(main);
-    const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status'); main.insertBefore(notice, form);
+    const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status');
+    const noticeRow = el('div', 'fv-chat-notice-row'); noticeRow.append(notice); main.insertBefore(noticeRow, form);
     // What the next video would download first, the studio's line, above the box the request is typed in.
     if (hint) main.insertBefore(hint.element, form);
     // A quoted button name stays on one line, so “新对话” never wraps in the middle.
@@ -320,7 +334,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         node.textContent = text;
         if (parts.length > 1) node.replaceChildren(...parts.flatMap((part, index) => part ? [el('span', index % 2 ? 'fv-chat-keep' : '', part)] : []));
     }
-    function say(text) { quoted(notice, text); notice.hidden = !text; }
+    // `failure`: the line reports a fault, so the button sits beside it.
+    const noticeIssue = issueButton(t, () => ({where: CHAT_ISSUE, message: notice.textContent})); noticeIssue.hidden = true;
+    noticeRow.append(noticeIssue);
+    function say(text, failure = false) { quoted(notice, text); notice.hidden = !text; noticeIssue.hidden = !text || !failure; }
 
     let dismissImage = null;
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
@@ -367,12 +384,21 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     const newChat = press('fv-chat-new', t('New chat', '新对话'), () => void startChat());
     newChat.prepend(glyph('M12 5v14M5 12h14')); newChat.title = t('New chat', '新对话');
     const newError = el('p', 'fv-chat-error fv-chat-new-error'); newError.hidden = true; newError.setAttribute('role', 'alert');
+    const newIssue = issueButton(t, () => ({where: CHAT_ISSUE, message: newError.textContent})); newIssue.hidden = true;
+    // Why a deletion did not happen, with what can be done next; never left silent.
+    const deleteError = el('div', 'fv-chat-error fv-chat-delete-error'); deleteError.hidden = true; deleteError.setAttribute('role', 'alert');
+    function deleteFailed(session, error, stop = false, report = true) {
+        const text = el('p', null, error), actions = el('div', 'fv-chat-delete-actions');
+        if (stop) actions.append(press('fv-chat-menu-item', t('Stop and delete', '停止并删除'), () => { deleteError.hidden = true; void deleteChat(session, true, true); }));
+        if (report) actions.append(issueButton(t, () => ({where: CHAT_ISSUE, message: text.textContent})));
+        deleteError.replaceChildren(text, actions); deleteError.hidden = false;
+    }
     const chats = press('fv-chat-chats', null, () => drawer(chats.getAttribute('aria-expanded') !== 'true'));
     const chatsDot = el('i', 'fv-chat-running'); chatsDot.setAttribute('aria-hidden', 'true'); chatsDot.hidden = true;
     chats.append(glyph('M4 5h16v12H9l-5 4V5M8 9h8M8 13h5'), chatsDot);
     chats.title = t('Chats', '对话'); chats.setAttribute('aria-label', chats.title);
     chats.setAttribute('aria-controls', sidebar.id); chats.setAttribute('aria-expanded', 'false');
-    tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, newError, list); element.prepend(sidebar);
+    tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, newError, newIssue, deleteError, list); element.prepend(sidebar);
     const listNodes = new Map(), narrow = () => window.matchMedia('(max-width: 720px)').matches;
     let menuState = null, changingMenu = false;
     const deleting = new Set(), deleted = new Set();
@@ -502,15 +528,16 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         updateMenu();
         if (lostFocus && !menuState) (listNodes.get(previous.session)?.button || (visible ? newChat : input)).focus({preventScroll: true});
     }
-    async function deleteChat(session) {
-        if (!menuState || deleting.has(session) || menuState.session !== session || menuState.stage !== 'confirm' || !active()) return;
+    async function deleteChat(session, stop = false, again = false) {
+        if (!again && (!menuState || deleting.has(session) || menuState.session !== session || menuState.stage !== 'confirm') || deleting.has(session) || !active()) return;
+        deleteError.hidden = true;
         const ids = conversations.conversations.map(row => row.id), index = ids.indexOf(session);
         const neighbor = ids[index + 1] || ids[index - 1];
         deleting.add(session);
         // A disabled focused button can lose native focus. Keep it on the origin while awaiting the request.
         menuOrigin()?.focus({preventScroll: true}); updateMenu();
         try {
-            const response = await agentPost(api, '/freevideo/agent/chat/delete', {session});
+            const response = await agentPost(api, '/freevideo/agent/chat/delete', stop ? {session, stop: true} : {session});
             if (stopped) return;
             const data = await response.json().catch(() => ({}));
             if (stopped) return;
@@ -531,9 +558,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             } else if (response.status === 409) {
                 if (menuState?.session === session) closeMenu();
                 if (data.error?.code === 'not_connected') { state = {...state, agent: {connected: false, name: null}}; render(); report(); }
-                else void readConversations(true);
-            }
-        } catch { /* Keep the row available for another try, without interrupting the conversation. */ }
+                else {
+                    void readConversations(true);
+                    if (stop) deleteFailed(session, t('Still stopping. Try deleting again in a moment.', '正在停止，请稍后再删除。'), false, false);
+                    else deleteFailed(session, t('This chat still has work in progress, so it was not deleted.', '这段对话里还有在生成的内容，没有删除。'), true);
+                }
+            } else deleteFailed(session, t('Could not delete: ', '没有删除成功：') + (data.error?.message || data.error?.code || `HTTP ${response.status}`));
+        } catch (error) { if (!stopped) deleteFailed(session, t('Could not delete: ', '没有删除成功：') + reason(error)); }
         finally {
             deleting.delete(session);
             if (menuState?.session === session) closeMenu();
@@ -541,7 +572,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         }
     }
     function chooseChat(session, focus = false) {
-        closeMenu(); say('');
+        closeMenu(); say(''); deleteError.hidden = true;
         showDraft(session); rememberSelection(session);
         selectedSession = session; selection++; pinned = true; away = null;
         conversations = selectConversation(conversations, session); renderConversations();
@@ -554,7 +585,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     async function startChat(from = null) {
         closeMenu();
         if (creating || !active() || conversations.supported !== true) return;
-        creating = true; newError.hidden = true; renderConversations(); render();
+        creating = true; newError.hidden = newIssue.hidden = true; renderConversations(); render();
         try {
             const response = await agentPost(api, '/freevideo/agent/chat/new', {});
             if (stopped) return;
@@ -565,7 +596,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             } else throw await requestError(response);
         } catch (error) {
             if (!stopped) {
-                newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = false;
+                newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = newIssue.hidden = false;
                 if (from) from.error = newError.textContent;
             }
         }
@@ -664,7 +695,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         ids.forEach(id => stopping.add(id)); render(); report();
         const results = await Promise.all(ids.map(id => retryAgentPost(api, '/freevideo/agent/activity/cancel', {id})));
         results.forEach((response, index) => { if (!response?.ok) stopping.delete(ids[index]); });
-        if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '没能停止，请再点一次。'));
+        if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '没能停止，请再点一次。'), true);
         else say('');
         if (!stopped) { render(); report(); void poll(); }
     }
@@ -678,7 +709,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     // ---- one entry of the conversation each ----
     function message(role) {
         const item = el('li', role === 'user' ? 'fv-chat-me' : 'fv-chat-ai'), text = el('p'); item.append(text);
-        let status = null, error = null, retry = null;
+        let status = null, error = null, retry = null, report = null;
         return {element: item, update(entry) {
             text.textContent = entry.text;
             if (role !== 'user') return;
@@ -693,9 +724,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                         if (entry.errorCode === 'session_full') { void startChat(original || entry); return; }
                         if (original) void send(original.text, original);
                     });
-                    status.append(error, retry); item.append(status);
+                    report = issueButton(t, () => ({where: CHAT_ISSUE, message: error.textContent}));
+                    status.append(error, retry, report); item.append(status);
                 }
                 quoted(error, entry.error || ''); error.hidden = !entry.error;
+                // Waiting for the agent to come back is not a fault.
+                report.hidden = !entry.error || !!entry.automatic;
                 const full = entry.errorCode === 'session_full';
                 retry.textContent = full ? t('New chat', '新对话') : t('Retry', '重试');
                 retry.disabled = entry.sending || (full ? creating : !sendingAllowed());
@@ -984,7 +1018,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const question = el('p', null, entry.question);
             const estimate = el('p', 'fv-chat-meta', entry.estimate_seconds > 0 ? about(entry.estimate_seconds, t) : ''); estimate.hidden = !estimate.textContent;
             item.replaceChildren(question, estimate, buttons);
-            if (error) { const notice = el('p', 'fv-chat-error', error); notice.setAttribute('role', 'alert'); item.append(notice); }
+            if (error) {
+                const notice = el('p', 'fv-chat-error', error); notice.setAttribute('role', 'alert');
+                item.append(notice, issueButton(t, () => ({where: CHAT_ISSUE, message: error})));
+            }
         }};
     }
     // Before anything is said: what the agent can do, and sentences that send themselves when clicked.
@@ -1155,7 +1192,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (entry.session === state.session) {
                 if (waiting && error?.code === 'not_connected') state = {...state, agent: {connected: false, name: null}};
                 if (waiting && error?.code === 'not_listening') state = {...state, agent: {...state.agent, listening: false}};
-                say(entry.errorCode === 'session_full' ? '' : explanation);
+                say(entry.errorCode === 'session_full' ? '' : explanation);  // the failed bubble carries the report button
             }
             return false;
         } finally {

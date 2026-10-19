@@ -8,6 +8,8 @@ import {loadCoverage, loadTextFonts, textFontStack, missingGlyphs, missingHint, 
 import {createSelectionActions, isTyping} from './editor_select.js';
 import {plan} from './editor_geometry.js';
 import {isolateDialogKeys} from './dialog_keys.js';
+import {issueButton} from './issue_button.js';
+const SPEECH_ISSUE = ['Auto subtitles', '自动字幕'], FONT_ISSUE = ['Editor text fonts', '剪辑器文字字体'];
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
 const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 const PRESET_KEY='freevideo.subtitle-presets',PRESET_LIMIT=6;
@@ -37,6 +39,8 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     const marker=toolbar.querySelector('.fv-ed-marker, .fv-ed-add-marker');
     if(marker) marker.after(buttons); else toolbar.insertBefore(buttons,toolbar.querySelector('.fv-ed-zoom'));
     const notice=el('span');notice.setAttribute('role','button');notice.tabIndex=0;notice.onclick=()=>jumpMissing();notice.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();jumpMissing();}}; notice.classList.add('fv-ed-text-notice'); notice.hidden=true; exportBox.prepend(notice);
+    const fontFailure=()=>t('Text fonts could not be loaded','文字字体没能加载');
+    let fontIssue=null;
     const menu=el('div','fv-ed-text-menu'); menu.hidden=true; menu.setAttribute('role','menu'); element.append(menu);
     const names={sans:t('Sans','黑体'),serif:t('Serif','宋体'),kai:t('Kai','楷体'),mono:t('Mono','等宽')};
     let disposed=false,ready=false,table=null,loadError=false,draft=null,fresh=null,typing=null,lastStyle={},editing=null,drag=null,raf=null,layouts=new Map(),mapped={x:0,y:0,w:1,h:1};
@@ -63,16 +67,16 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     // `need` is what has to be downloaded before the first use, in bytes; the same press downloads it and goes on.
     const speech={buttons:new Set(),available:false,need:0,busy:false,loading:false,shown:null,job:null,stop:null,run:0};
     function speechLabel(fraction){speech.shown=fraction;const p=Math.round(Math.min(1,Math.max(0,Number(fraction)||0))*100),size=Math.max(1,Math.round(speech.need/1e6)),text=fraction==null?(speech.need?t(`Auto subtitles · Download ${size} MB`,`自动字幕 · 下载 ${size} MB`):t('Auto subtitles','自动字幕')):speech.loading?t(`Cancel · Downloading ${p}%`,`取消 · 下载 ${p}%`):t(`Cancel · ${p}%`,`取消 · ${p}%`);for(const b of speech.buttons){b.textContent=text;b.hidden=!(speech.available||speech.need);}}
-    function speechEnd(text){speech.stop?.();speech.stop=null;speech.job=null;speech.busy=false;speech.loading=false;speechLabel(null);if(text)actions.notify?.(text);}
+    function speechEnd(text,where=null){speech.stop?.();speech.stop=null;speech.job=null;speech.busy=false;speech.loading=false;speechLabel(null);if(text)actions.notify?.(text,where);}
     const speechFailed=()=>t('Could not create subtitles','没能生成字幕'),speechSilent=()=>t('No speech found','没有听到说话声');
     const speechReason=reason=>reason==='no_sound'?speechSilent():reason==='language'?t('Language not supported yet','暂不支持这种语言'):speechFailed();
     function speechResult(job){
         if(job.state==='running'){speechLabel(job.fraction);return true;}
-        if(job.state!=='done'){speechEnd(job.state==='cancelled'?null:speechReason(job.reason));return false;}
+        if(job.state!=='done'){speechEnd(job.state==='cancelled'?null:speechReason(job.reason),job.state==='cancelled'||['no_sound','language'].includes(job.reason)?null:SPEECH_ISSUE);return false;}
         const cues=(Array.isArray(job.result?.lines)?job.result.lines:[]).filter(l=>typeof l?.text==='string'&&l.text.trim()&&l.end>l.start).map(l=>({start:l.start,frames:l.end-l.start,text:l.text.trim()}));
         speechEnd();if(!cues.length){actions.notify?.(speechSilent());return false;}
         finishInline();commitDraft();
-        if(!apply(t('Auto subtitles','自动字幕'),r=>addSubtitles(r,cues,{replace:true})))actions.notify?.(speechFailed());
+        if(!apply(t('Auto subtitles','自动字幕'),r=>addSubtitles(r,cues,{replace:true})))actions.notify?.(speechFailed(),SPEECH_ISSUE);
         else{const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}
         return false;
     }
@@ -87,17 +91,17 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
                 const ability=done?await actions.speech.ability():null;
                 if(run!==speech.run)return;
                 if(ability){speech.available=ability.available;speech.need=ability.need;}
-                if(!done||speech.need){speechEnd(t('Could not download. Try again.','没能下载，请再试一次。'));return;}
-                if(!speech.available){speechEnd(speechFailed());return;}
+                if(!done||speech.need){speechEnd(t('Could not download. Try again.','没能下载，请再试一次。'),SPEECH_ISSUE);return;}
+                if(!speech.available){speechEnd(speechFailed(),SPEECH_ISSUE);return;}
                 speech.loading=false;
             }
             speechLabel(0);
             const job=await actions.speech.start();
             if(run!==speech.run){if(job?.id)Promise.resolve(actions.speech.cancel(job.id)).catch(()=>{});return;}
-            if(!job){speechEnd(speechFailed());return;}
+            if(!job){speechEnd(speechFailed(),SPEECH_ISSUE);return;}
             speech.job=job.id??null;
-            if(speechResult(job))speech.stop=actions.speech.watch(job.id,value=>{if(run!==speech.run)return false;if(!value){speechEnd(speechFailed());return false;}return speechResult(value);});
-        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download. Try again.','没能下载，请再试一次。'):speechFailed());}
+            if(speechResult(job))speech.stop=actions.speech.watch(job.id,value=>{if(run!==speech.run)return false;if(!value){speechEnd(speechFailed(),SPEECH_ISSUE);return false;}return speechResult(value);});
+        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download. Try again.','没能下载，请再试一次。'):speechFailed(),SPEECH_ISSUE);}
     }
     function commitDraft(){if(draft){const change=draft.change;apply(t('Text','文字'),change);const c=selectedText();if(c?.text_kind==='text')lastStyle={...styleOf(state.record,c)};}}
     // Editing a text ended. One left without words is taken away; one that never had any leaves no step behind.
@@ -227,13 +231,18 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     function updateWarnings(){
         const r=record(),c=selectedText(),s=c&&styleOf(r,model.find(r,c.id));
         const missing=projectMissing(r),chars=[...new Set(missing.flatMap(r=>r.chars))];
-        notice.hidden=!chars.length&&!loadError;notice.textContent=loadError?t('Text fonts could not be loaded','文字字体没能加载'):missingHint(chars,t);notice.title=notice.textContent;
+        notice.hidden=!chars.length&&!loadError;notice.textContent=loadError?fontFailure():missingHint(chars,t);notice.title=notice.textContent;
         for(const [kind,p]of panels){
             if(c?.text_kind!==kind)continue;
             const entry=model.find(r,c.id),absent=table?missingGlyphs(entry.text,s.font,!!s.bold,table):[];
-            p.warning.hidden=!absent.length&&!loadError;p.warning.textContent=loadError?t('Text fonts could not be loaded','文字字体没能加载'):missingHint(absent,t);
+            p.warning.hidden=!absent.length&&!loadError;p.warning.textContent=loadError?fontFailure():missingHint(absent,t);
+            if(loadError)p.warning.append(issueButton(t,()=>({where:FONT_ISSUE,message:fontFailure()})));
             p.overflow.hidden=kind!=='subtitle'||!ready||!metrics||!textLayout(metrics,entry.text,s,kind,r.width,r.height).overTwo;
         }
+        // Both messages can be on screen at once; the button stays with the one nearest the text panel.
+        const panelShowing=loadError&&[...panels.values()].some(p=>p.warning.offsetParent!==null);
+        if(loadError&&!panelShowing&&!fontIssue){fontIssue=issueButton(t,()=>({where:FONT_ISSUE,message:fontFailure()}));notice.after(fontIssue);}
+        if((!loadError||panelShowing)&&fontIssue){fontIssue.remove();fontIssue=null;}
     }
     function jumpMissing(){const first=projectMissing(state.record)[0];if(first){const c=model.find(state.record,first.id);state.select({kind:'clip',ids:[c.id]});state.seek(c.start);adjust.open();}}
     function updateClip(item,r){
@@ -368,14 +377,14 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     async function beforeExport(){
         if(!state.record.tracks.some(isTextTrack))return true;finishInline();commitDraft();await ensureFonts();
         const chars=[...new Set(projectMissing(state.record).flatMap(r=>r.chars))];if(!chars.length&&!loadError)return true;
-        const dialog=el('dialog','fv-studio fv-ed-text-export-dialog'),title=el('h3','',t('Export','导出')),message=el('p','',loadError?t('Text fonts could not be loaded','文字字体没能加载'):missingHint(chars,t));
-        const close=button(t('Back to edit','返回修改'),{onClick:()=>dialog.close()});dialog.append(title,message,close);document.body.append(dialog);
-        const stop=isolateDialogKeys(dialog,(e)=>{if(e.type==='keydown'&&e.key==='Escape'){e.preventDefault();dialog.close();}else if(e.type==='keydown'&&e.key==='Enter'){e.preventDefault();dialog.close();}});
+        const dialog=el('dialog','fv-studio fv-ed-text-export-dialog'),title=el('h3','',t('Export','导出')),message=el('p','',loadError?fontFailure():missingHint(chars,t));
+        const close=button(t('Back to edit','返回修改'),{onClick:()=>dialog.close()});dialog.append(title,message);if(loadError)dialog.append(issueButton(t,()=>({where:FONT_ISSUE,message:fontFailure()})));dialog.append(close);document.body.append(dialog);
+        const stop=isolateDialogKeys(dialog,(e)=>{if(e.type==='keydown'&&e.key==='Escape'){e.preventDefault();dialog.close();}else if(e.type==='keydown'&&e.key==='Enter'&&!e.target.closest?.('.fv-issue-button')){e.preventDefault();dialog.close();}});
         dialog.onclose=()=>{stop();dialog.remove();jumpMissing();};dialog.showModal();close.focus();return false;
     }
     return {get ready(){return ensureFonts();},beforeExport,speech(value){speech.available=value?.available===true;speech.need=Number(value?.need)||0;if(!speech.busy)speechLabel(null);},flush(){finishInline();commitDraft();},keyboard(e){
         if(isTyping(e.target)||e.ctrlKey||e.metaKey||e.altKey||e.isComposing)return false;
         if(e.key.toLowerCase()==='t'){e.preventDefault();e.stopPropagation();add('text');return true;}
         if(e.key==='Escape'&&(drag||!menu.hidden)){e.preventDefault();if(drag)endDrag(e,true);menu.hidden=true;return true;}return false;
-    },dispose(){disposed=true;if(speech.busy){const id=speech.job;speech.run++;speechEnd();if(id)Promise.resolve(actions.speech.cancel(id)).catch(()=>{});}speech.buttons.clear();player.setTextRenderer?.(null);unsubscribe();resize?.disconnect();cancelAnimationFrame(raf);tracksHost.removeEventListener('contextmenu',contextMenu);element.removeEventListener('pointerdown',outside);frame.removeEventListener('seeked',seeked,true);frame.removeEventListener('loadeddata',seeked,true);canvas.remove();boundsLayer.remove();buttons.remove();notice.remove();menu.remove();}};
+    },dispose(){disposed=true;if(speech.busy){const id=speech.job;speech.run++;speechEnd();if(id)Promise.resolve(actions.speech.cancel(id)).catch(()=>{});}speech.buttons.clear();player.setTextRenderer?.(null);unsubscribe();resize?.disconnect();cancelAnimationFrame(raf);tracksHost.removeEventListener('contextmenu',contextMenu);element.removeEventListener('pointerdown',outside);frame.removeEventListener('seeked',seeked,true);frame.removeEventListener('loadeddata',seeked,true);canvas.remove();boundsLayer.remove();buttons.remove();notice.remove();fontIssue?.remove();menu.remove();}};
 }

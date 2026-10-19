@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 from freevideo_engine.desktop_runtime import check_launcher_dependencies, package_data_files, source_files
 from freevideo_engine.launcher_update import MAC_CHANNEL, build_identity
 from scripts.build_windows import build_info, stamp_source
+from scripts.source_build import spec_hook
 from freevideo_engine.release_notes import markdown
 from scripts.build_launcher_notices import collect as collect_notices
 
@@ -162,6 +163,7 @@ a = Analysis([{str(ROOT / 'scripts/macos_app.py')!r}], pathex=[{str(ROOT)!r}],
     hiddenimports=['psutil', 'PySide6.QtQml', 'PySide6.QtQuick',
                    'PySide6.QtQuickControls2', 'PySide6.QtWidgets', 'freevideo_engine.managed'],
     excludes=['torch', 'triton', 'numpy', 'transformers', 'tkinter'])
+{spec_hook(ROOT, staged, build_file)}
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='FreeVideo',
           debug=False, strip=False, upx=False, console=False, target_arch='arm64')

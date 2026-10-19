@@ -152,24 +152,38 @@ class Workspace:
                 pass  # Learning only refines the bound; the encode itself does not depend on it.
 
 
-def dedicated_room(torch, reader=None, budget=None):
+def dedicated_room(torch, reader=None, budget=None, detail=None):
     """Bytes a new allocation can use without leaving dedicated VRAM or this request's budget.
 
     PyTorch's cached free blocks count. cudaMemGetInfo is not the WDDM budget:
     after a load that left 1.9 GiB by its count, the 4060 Ti above reported no
     free memory at all, so on Windows the DXGI budget bounds it as well.
     `budget` is what this process may hold in total under FreeVideo's plan.
+    `detail`, when given, receives each reading and which bound decided.
     """
     free = torch.cuda.mem_get_info()[0]
+    bound = 'cuda_free'
+    if detail is not None:
+        detail['cuda_free_bytes'] = int(free)
     if reader is not None:
         try:
             local = reader.sample()['local']
-            free = min(free, max(0, local['budget_bytes'] - local['usage_bytes']))
+            window = max(0, local['budget_bytes'] - local['usage_bytes'])
+            if detail is not None:
+                detail.update(local_budget_bytes=int(local['budget_bytes']), local_usage_bytes=int(local['usage_bytes']))
+            if window < free:
+                free, bound = window, 'local_budget'
         except (OSError, KeyError):
             pass
-    room = free + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
+    allocated, reserved = torch.cuda.memory_allocated(), torch.cuda.memory_reserved()
+    room = free + reserved - allocated
     if budget is not None:
-        room = min(room, budget - torch.cuda.memory_allocated())
+        if budget - allocated < room:
+            room, bound = budget - allocated, 'process_budget'
+        if detail is not None:
+            detail['process_budget_bytes'] = int(budget)
+    if detail is not None:
+        detail.update(allocated_bytes=int(allocated), reserved_bytes=int(reserved), bound=bound)
     return int(max(0, room))
 
 
@@ -185,12 +199,15 @@ def adapter_reader():
 
 def make_room(patcher, torch, need, reader=None, budget=None):
     """Move loaded weights back to host memory until `need` bytes of dedicated VRAM are free."""
-    before = dedicated_room(torch, reader, budget)
-    result = dict(need_bytes=int(need), room_before_bytes=before, loaded_before_bytes=int(patcher.loaded_size()))
+    readings = {}
+    before = dedicated_room(torch, reader, budget, readings)
+    result = dict(need_bytes=int(need), room_before_bytes=before, loaded_before_bytes=int(patcher.loaded_size()),
+                  readings=readings)
     if before < need:
         unloaded = patcher.partially_unload(patcher.offload_device, need - before)
-        result.update(unloaded_bytes=int(unloaded or 0), room_after_bytes=dedicated_room(torch, reader, budget),
-                      loaded_after_bytes=int(patcher.loaded_size()))
+        after = {}
+        result.update(unloaded_bytes=int(unloaded or 0), room_after_bytes=dedicated_room(torch, reader, budget, after),
+                      loaded_after_bytes=int(patcher.loaded_size()), readings_after=after)
     return result
 
 

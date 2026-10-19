@@ -826,12 +826,61 @@ def _faster_source(compare, now, started, offset, done, size, alternatives, time
     return None
 
 
+
+def _redirect_fields(text):
+    """curl's http_code and redirect_url output as (status, url); Windows curl ends its lines with CRLF."""
+    status, _, destination = text.partition('\n')
+    return status.strip(), destination.strip()
+
+
 def download(candidates, path, expected, progress=None, *, network=None, env=None, size=None,
              algorithm='sha256', git_blob=False, headers_for=None, stall_seconds=None, category='download',
-             low_speed_limit=1024, max_seconds=None, cycles=2, slow_seconds=None, keep_partial=False):
-    """Resume across ranked sources; hash before accepting, retain rejected bytes."""
+             low_speed_limit=1024, max_seconds=None, cycles=2, slow_seconds=None, keep_partial=False,
+             validate_url=None, verify=None, fallbacks=None):
+    """Resume ranked sources; defaults retain rejected bytes.
+
+    validate_url checks each redirect before curl can follow it; verify runs
+    after the digest and before publication. fallbacks maps a source name to
+    an alternate (url, headers) within the same source/route retry round.
+    """
     network = network or {}
     path = Path(path)
+    updating = category == 'launcher-update'
+    integrity_failed = False
+    failed_sources = set()
+    transferred, high_water, last_rate = 0, 0, 0.
+    transfer_samples = deque([(time.monotonic(), 0)])
+
+    def update_progress(done, added):
+        nonlocal transferred, high_water, last_rate
+        now = time.monotonic()
+        transferred += added
+        transfer_samples.append((now, transferred))
+        while len(transfer_samples) > 2 and transfer_samples[1][0] < now - 5:
+            transfer_samples.popleft()
+        seconds = now - transfer_samples[0][0]
+        last_rate = (transferred-transfer_samples[0][1]) / max(.001, seconds)
+        # A clean retry keeps the visible bar. Completion is reported only
+        # after the hash and optional caller verification have both succeeded.
+        high_water = max(high_water, min(done, size-1) if size else done)
+        if progress:
+            progress(high_water, size or 0, last_rate)
+
+    def reject(candidate, reason):
+        if updating:
+            candidate.unlink(missing_ok=True)
+        else:
+            retain_partial(candidate, reason)
+
+    def publish(candidate):
+        check = network.get('resource_check')
+        if updating and check:
+            check()
+        from .file_ops import publish as move
+        move(candidate, path)
+        if updating and progress:
+            progress(path.stat().st_size, size or 0, last_rate)
+
     model = category in ('models', 'vdn-models', 'edge-models', 'image-models')
     stall_seconds = stall_seconds if stall_seconds is not None else 120 if model else 20
 
@@ -839,7 +888,7 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
         if size is not None and candidate.stat().st_size != size:
             return False
         event(network, category=category, source=source, file=path.name, action='verifying', algorithm=algorithm)
-        check = network.get('resource_check') if keep_partial else None
+        check = network.get('resource_check') if keep_partial or updating else None
         from .install_activity import byte_progress
         report = byte_progress('verify_progress', path.name, report=lambda **row:
             event(network, category=category, source=source, action='verify-progress', **row))
@@ -848,8 +897,11 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 check()
             if model:
                 report(done, total)
-        return hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models', 'image-models'),
-                         progress=verification if model or check else None) == expected
+        matched = hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models', 'image-models'),
+                            progress=verification if model or check else None) == expected
+        if matched and verify is not None:
+            matched = verify(candidate)
+        return matched
     if path.is_file():
         if matches(path):
             return
@@ -858,15 +910,16 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
     partial = path.with_suffix(path.suffix + '.partial')
     if partial.is_file() and (size is None or partial.stat().st_size == size):
         if matches(partial):
-            from .file_ops import publish
-            publish(partial, path)
+            publish(partial)
             return
         if size is not None:
             # A complete-but-corrupt file is not a resumable prefix.
-            retain_partial(partial, 'hash-rejected')
+            reject(partial, 'hash-rejected')
     timeout = network.get('timeout_seconds', 5)
     affinity = partial.with_name(partial.name + '.source.json')
-    candidates = [(name, url, route) for name, url in candidates
+    candidates = [(name, address, route, headers) for name, url in candidates
+                  for address, headers in ([(url, ())] +
+                      ([(fallbacks[name][0], tuple(fallbacks[name][1]))] if fallbacks and name in fallbacks else []))
                   for route in route_order(network, category, name, env)]
     if not candidates:
         raise RuntimeError('No download sources configured; existing files retained')
@@ -885,18 +938,30 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
         # if the user's entire connection is slow. Do not oscillate forever.
         if cycle and measured_rates:
             candidates.sort(key=lambda row: -measured_rates.get((row[0], row[2]), 0))
-        for candidate_index, (name, url, route) in enumerate(candidates):
-            for restart in range(3 if model else 2):
+        for candidate_index, (name, original_url, route, extra_headers) in enumerate(candidates):
+            if name in failed_sources:
+                continue
+            url, redirects, restart = original_url, 0, 0
+            # Redirects are individual curl requests when a caller supplies a
+            # policy. Never let curl contact an unchecked redirect destination.
+            for attempt in range(16 if validate_url else (3 if model else 2)):
+                if updating and network.get('resource_check'):
+                    network['resource_check']()
+                if validate_url:
+                    try:
+                        validate_url(url)
+                    except ValueError:
+                        failed_sources.add(name)
+                        break
                 offset = partial.stat().st_size if partial.exists() else 0
                 if keep_partial and size is not None and offset == size:
                     if matches(partial, name):
-                        from .file_ops import publish
-                        publish(partial, path)
+                        publish(partial)
                         return
-                    retain_partial(partial, 'hash-rejected')
+                    reject(partial, 'hash-rejected')
                     offset = 0
                 if size and offset > size:
-                    retain_partial(partial, 'oversized')
+                    reject(partial, 'oversized')
                     offset = 0
                 remembered = False
                 def remember_source():
@@ -910,7 +975,11 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 event(network, category=category, source=name, route=route, file=path.name, action='attempt', method='curl', cycle=cycle, resume_bytes=offset)
                 attempt_env = route_environment(network, category, name, env, route)
                 command = curl_command(timeout, attempt_env) + ['--output', str(partial), '--write-out', '%{http_code}']
-                if not model and slow_seconds is None:
+                if validate_url:
+                    command += ['--disable', '--max-redirs', '0', '--write-out', '%{http_code}\n%{redirect_url}']
+                    # --disable must be the first option to suppress .curlrc.
+                    command.insert(1, command.pop(command.index('--disable')))
+                if not model and slow_seconds is None and not updating:
                     command += ['--speed-limit', str(low_speed_limit), '--speed-time', str(stall_seconds)]
                 if max_seconds is not None:
                     command += ['--max-time', str(max_seconds)]
@@ -934,11 +1003,14 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 slow = False
                 faster = None
                 compare = dict(thread=None, rates={}, checks=0, at=started + SWITCH_AFTER_SECONDS, current=0.)
-                alternatives_ahead = [row for row in candidates[candidate_index+1:] if row[0] != name]
+                alternatives_ahead = [row[:3] for row in candidates[candidate_index+1:] if row[0] != name]
                 last_body, previous_done = started, offset
+                reported_done = offset
                 recent = deque([(started, offset)])
                 try:
-                    process.stdin.write(curl_config(url, headers_for(name) if headers_for else ()))
+                    process.stdin.write(curl_config(url,
+                        tuple(headers_for(name) if headers_for else ()) + extra_headers
+                        if urlsplit(url).netloc == urlsplit(original_url).netloc else ()))
                     process.stdin.close()
                     while process.poll() is None:
                         if network.get('resource_check'):
@@ -966,15 +1038,21 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                                 and (done - recent[0][1]) / (now - recent[0][0]) < low_speed_limit):
                             slow = True
                             break
-                        if (cycle == 0 and size and alternatives_ahead and compare['checks'] < SWITCH_MAX_CHECKS
+                        # Speed samples follow redirects themselves; guarded updates
+                        # must keep every request inside the caller's URL policy.
+                        if (not validate_url and cycle == 0 and size and alternatives_ahead and compare['checks'] < SWITCH_MAX_CHECKS
                                 and not network.get('manual_source_switch')):
                             faster = _faster_source(compare, now, started, offset, done, size, alternatives_ahead,
                                                     timeout, env, network, category, headers_for)
                             if faster is not None:
                                 break
                         if progress:
-                            sample = next((row for row in recent if row[0] >= now - 5), recent[0])
-                            progress(done, size or 0, max(0, done - sample[1]) / max(.001, now - sample[0]))
+                            if updating:
+                                update_progress(done, max(0, done-reported_done))
+                                reported_done = done
+                            else:
+                                sample = next((row for row in recent if row[0] >= now - 5), recent[0])
+                                progress(done, size or 0, max(0, done - sample[1]) / max(.001, now - sample[0]))
                         try:
                             process.wait(timeout=.25)
                         except subprocess.TimeoutExpired:
@@ -990,11 +1068,22 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                         except subprocess.TimeoutExpired:
                             process.kill()
                             process.wait()
-                    status = process.stdout.read(16).decode(errors='replace')
+                    if not process.stdin.closed:
+                        process.stdin.close()
+                    status = process.stdout.read(65536 if validate_url else 16).decode(errors='replace')
                     process.stdout.close()
                     # --silent --show-error keeps this to a line or two.
                     curl_message = _package_failure(SimpleNamespace(stderr=process.stderr.read(2048)))[1] if process.returncode else ''
                     process.stderr.close()
+                if validate_url:
+                    status, destination = _redirect_fields(status)
+                    if process.returncode == 47 and status in ('301', '302', '303', '307', '308'):
+                        redirects += 1
+                        if not destination or redirects > 5:
+                            failed_sources.add(name)
+                            break
+                        url = urljoin(url, destination)
+                        continue
                 current_size = partial.stat().st_size if partial.exists() else 0
                 if slow_seconds is not None:
                     measured_rates[name, route] = (max(0, current_size - offset) /
@@ -1003,21 +1092,26 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                     measured_rates[name, route] = compare['current']
                     measured_rates.update(compare['rates'])
                     # The faster source is tried next, with the retained prefix.
-                    position = candidates.index(faster)
+                    position = next(i for i, row in enumerate(candidates) if row[:3] == faster)
                     candidates.insert(candidate_index + 1, candidates.pop(position))
                 if model and current_size > offset:
                     remember_source()
-                if oversized is not None:
-                    retain_partial(partial, 'oversized-response')
+                if oversized is not None or (updating and process.returncode == 63):
+                    if partial.exists():
+                        reject(partial, 'oversized-response')
+                    if updating:
+                        integrity_failed = True
+                        failed_sources.add(name)
                     source_health(network, category, name, False)
                     event(network, category=category, source=name, file=path.name, action='fallback',
                           method='curl', reason='response-size-exceeded', observed_bytes=oversized,
                           expected_bytes=size, resume_bytes=offset)
                     break
+                if updating and (size is None or current_size <= size):
+                    update_progress(current_size, max(0, current_size-reported_done))
                 if process.returncode == 0:
                     if matches(partial, name):
-                        from .file_ops import publish
-                        publish(partial, path)
+                        publish(partial)
                         if network.get('download_settings_path'):
                             from .download_settings import record_speed
                             record_speed(Path(network['download_settings_path']).parent,
@@ -1026,7 +1120,15 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                         route_health(network, category, name, route)
                         event(network, category=category, source=name, route=route, file=path.name, action='verified', method='curl', bytes=path.stat().st_size)
                         return
-                    retain_partial(partial, 'hash-rejected')
+                    reject(partial, 'hash-rejected')
+                    if updating:
+                        integrity_failed = True
+                        # A corrupt retained prefix must not poison the good
+                        # source. Give this source one clean fetch, then move on.
+                        if offset and restart == 0:
+                            restart += 1
+                            continue
+                        failed_sources.add(name)
                     source_health(network, category, name, False)
                     event(network, category=category, source=name, file=path.name, action='fallback', reason='integrity-mismatch')
                     break
@@ -1036,7 +1138,8 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                               action='resume-refused', resume_bytes=offset, reason='source-does-not-support-range')
                         break
                     # A mirror lacking Range must start over, with previous bytes kept.
-                    retain_partial(partial, 'resume-unavailable')
+                    reject(partial, 'resume-unavailable')
+                    restart += 1
                     continue
                 # A connection that was moving bytes and then ended with an
                 # unclassified exit is an interruption, not a refusal.
@@ -1046,7 +1149,10 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 if model and transient and restart < 2 and candidate_index + 1 == len(candidates) and process.returncode not in (5, 7):
                     retry_wait(network, restart, category=category, source=name, file=path.name,
                                resume_bytes=current_size, reason='no-progress' if stalled else 'connection-interrupted')
+                    restart += 1
                     continue
+                if updating and stalled:
+                    failed_sources.add(name)
                 reason = 'no-progress' if stalled else 'slow-transfer' if slow else 'faster-source' if faster else 'curl-' + str(process.returncode)
                 alternatives = route_order(network, category, name, env)
                 if alternatives.index(route) + 1 < len(alternatives):
@@ -1063,7 +1169,9 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
             event(network, category=category, source=name, file=path.name, action='restart-approved',
                   retained_bytes=partial.stat().st_size, reason='resume-unavailable')
             retain_partial(partial, 'restart-approved')
-    raise DownloadError('Every download source failed for %s. Check your network or choose another connection mode in Downloads. Partial files retained' % path.name)
+    error = DownloadError('Every download source failed for %s. Check your network or choose another connection mode in Downloads. Partial files retained' % path.name)
+    error.integrity = integrity_failed
+    raise error
 
 
 # clone() passes the remote through GIT_CONFIG_PARAMETERS and writes the sparse

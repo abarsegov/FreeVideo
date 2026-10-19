@@ -2,6 +2,7 @@
 import logging
 from pathlib import Path
 from .comfy_assets import REFERENCE_INPUTS
+from .media_request import validate_early_steps
 
 
 def _image(value, path):
@@ -127,6 +128,8 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
         media['references'] = list(media.get('references', []))
         for index, reference in enumerate(references):
             kind, value = reference['kind'], reference['value']
+            if 'early_steps' in reference:
+                validate_early_steps(reference)
             path = run / ('reference-%02d' % index)
             if kind == 'image':
                 path = path.with_suffix('.png')
@@ -142,7 +145,10 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
                 _audio(value, path)
             else:
                 raise ValueError('Unknown reference type')
-            media['references'].append({'kind': kind, 'path': str(path)})
+            row = {'kind': kind, 'path': str(path)}
+            if 'early_steps' in reference:
+                row['early_steps'] = reference['early_steps']
+            media['references'].append(row)
     if loras:
         media['loras'] = [dict(row) for row in loras]
     if conditioning is not None:

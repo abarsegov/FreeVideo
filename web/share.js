@@ -4,6 +4,7 @@ import {effortName, resultEffort} from './sampling_effort.js';
 import {fontCSS as bundledFontCSS, fontLoaded, loadFont} from './fonts.js';
 import {shareLayout} from './share_layout.js';
 import {videoUnavailableText} from './studio_extend.js';
+import {issueButton} from './issue_button.js';
 
 const css=document.createElement('link'); css.rel='stylesheet'; css.href=new URL('./share.css',import.meta.url).href; document.head.append(css);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e;};
@@ -104,13 +105,15 @@ export async function openShare(record,t){
     player.src=api.apiURL('/view?'+new URLSearchParams({filename:record.video.slice(split+1),subfolder:record.video.slice(0,split),type:'output'}));
     preview.append(player,canvas);panel.append(preview);
     const footer=el('footer','fv-share-footer'),message=el('span','fv-share-status');message.setAttribute('role','status');
+    const problem=issueButton(t,()=>({where:['Share','分享'],message:message.textContent}));problem.hidden=true;
+    const say=(text,fault=false)=>{message.textContent=text;problem.hidden=!fault||!text;if(fault&&text)dialog.dataset.error='true';else delete dialog.dataset.error;};
     const save=button(t('Save image','保存分享图'),download,'fv-primary');save.disabled=true;
     const cancel=button(t('Cancel','取消'),()=>exportRequest?.abort());cancel.hidden=true;
-    footer.append(message,cancel,save);heading.append(title,tabs,close);dialog.append(heading,panel,footer);
+    footer.append(message,problem,cancel,save);heading.append(title,tabs,close);dialog.append(heading,panel,footer);
     const videoError=()=>{
         if(disposed)return;
         videoFailed=true;
-        if(kind==='video'&&!busy){message.textContent=videoUnavailableText(t);dialog.dataset.error='true';}
+        if(kind==='video'&&!busy)say(videoUnavailableText(t),true);
     };
     player.addEventListener('error',videoError);
     const choose=next=>{
@@ -121,8 +124,7 @@ export async function openShare(record,t){
         save.textContent=kind==='image'?t('Save image','保存分享图'):t('Save video','保存分享视频');
         slide();
         if(!ready)return;
-        message.textContent=kind==='video'&&videoFailed?videoUnavailableText(t):'';
-        if(kind==='video'&&videoFailed)dialog.dataset.error='true';else delete dialog.dataset.error;
+        say(kind==='video'&&videoFailed?videoUnavailableText(t):'',kind==='video'&&videoFailed);
         drawShareCard(canvas,kind==='image'?first:null,logo,metadata,t);
         player.hidden=kind!=='video';
         if(kind==='video')player.play().catch(error=>{if(!['AbortError','NotAllowedError'].includes(error.name))videoError();});else player.pause();
@@ -138,7 +140,7 @@ export async function openShare(record,t){
     async function download(){
         if(!ready||busy)return;
         busy=true;save.disabled=true;cancel.hidden=kind==='image';tabs.querySelectorAll('button').forEach(b=>b.disabled=true);
-        message.textContent=kind==='image'?t('Saving the share image…','正在保存分享图…'):t('Exporting the share video…','正在导出分享视频…');
+        say(kind==='image'?t('Saving the share image…','正在保存分享图…'):t('Exporting the share video…','正在导出分享视频…'));
         dialog.dataset.busy='true';delete dialog.dataset.error;
         exportRequest=new AbortController();
         try{
@@ -151,21 +153,19 @@ export async function openShare(record,t){
                 if(disposed)return;
                 const url=URL.createObjectURL(blob),a=el('a');
                 a.href=url;a.download=`FreeVideo_share_${id.split('/')[1].slice(0,12)}.png`;a.click();
-                setTimeout(()=>URL.revokeObjectURL(url),60000);message.textContent='';return;
+                setTimeout(()=>URL.revokeObjectURL(url),60000);say('');return;
             }
             if(!exported){
                 const response=await api.fetchApi('/freevideo/share/video',{method:'POST',headers:{'Content-Type':'application/json'},signal:exportRequest.signal,
                     body:JSON.stringify({id,template,rect:shape.rect})});
-                if(response.status===409)throw new Error(t('Another export is running. Try again shortly.','已有分享视频正在导出，请稍后再试。'));
+                if(response.status===409)throw Object.assign(new Error(t('Another export is running. Try again shortly.','已有分享视频正在导出，请稍后再试。')),{reportable:false});
                 if(!response.ok)throw new Error(t('Export could not complete. Try again.','分享视频导出未完成，请重试。'));
                 exported=await response.json();
             }
             if(disposed)return;
-            const a=el('a');a.href=api.apiURL('/freevideo/share/video?'+new URLSearchParams(exported));a.download='';a.click();message.textContent='';
+            const a=el('a');a.href=api.apiURL('/freevideo/share/video?'+new URLSearchParams(exported));a.download='';a.click();say('');
         }catch(error){if(!disposed){
-            message.textContent=kind==='image'?t('Could not save the share image. Try again.','分享图没有保存成功，请重试。')
-                :error.name==='AbortError'?'':error.message;
-            if(message.textContent)dialog.dataset.error='true';
+            say(error.name==='AbortError'?'':kind==='image'?t('Could not save the share image. Try again.','分享图没有保存成功，请重试。'):error.message,error.reportable!==false);
         }}
         finally{busy=false;if(!disposed){save.disabled=false;cancel.hidden=true;delete dialog.dataset.busy;tabs.querySelectorAll('button').forEach(b=>b.disabled=false);}}
     }
@@ -184,5 +184,5 @@ export async function openShare(record,t){
         preview.style.aspectRatio=`${shape.width}/${shape.height}`;
         player.style.cssText=`left:${shape.rect[0]/shape.width*100}%;top:0;width:${shape.rect[2]/shape.width*100}%;height:${shape.rect[3]/shape.height*100}%`;
         ready=true;choose(kind);save.disabled=false;
-    }catch(error){if(!disposed){message.textContent=error.message||t('Preview unavailable. Close and try again.','预览暂时无法读取，请关闭后重试。');dialog.dataset.error='true';}}
+    }catch(error){if(!disposed)say(error.message||t('Preview unavailable. Close and try again.','预览暂时无法读取，请关闭后重试。'),true);}
 }

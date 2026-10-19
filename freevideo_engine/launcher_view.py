@@ -198,6 +198,8 @@ def build(app):
     app.detail_button.configure(style='Quiet.TButton'); app.detail_button.pack(side='left')
     app.copy_error_button = app.button(tools, 'Copy error', '复制错误', app.copy_error)
     app.copy_error_button.configure(style='Quiet.TButton')
+    app.report_error_button = app.button(tools, 'Report a problem', '提交问题', app.report_error)
+    app.report_error_button.configure(style='Quiet.TButton')
     from . import __version__
     ttk.Label(tools, text=__version__, style='Meta.TLabel').pack(side='right')
     app.update_row = tools

@@ -52,13 +52,17 @@ class ImageShape:
 _ENCODE_BASE = 2.7 * GiB          # prompt length, not image size, drives this stage
 _DENOISE_BASE, _DENOISE_PER_MP = 1.06 * GiB, 0.554 * GiB
 _DECODE_BASE, _DECODE_PER_MP = 2.10 * GiB, 0.15 * GiB
-_UNTILED_DECODE_PER_MP = 6.5 * GiB   # decoding the whole image at once instead of in tiles
+# Decoding the whole image at once instead of in tiles. A single frame keeps no
+# causal cache: the whole-image decoder workspace is 3.49 GiB per megapixel
+# (RTX PRO 6000, 0.26 to 4.2 MP, linear) where the cached one took 6.25.
+_UNTILED_DECODE_PER_MP = 3.7 * GiB
 # Decoding in 512-pixel tiles (256 overlap) keeps the decoder's padded tile edges
 # out of tall pictures, where 256-pixel tiles left coloured vertical lines and a
-# grid texture. A fixed-latent B200 sweep measured +1.43 GiB of decoder workspace;
-# reserve 1.6 GiB. A card that cannot afford it decodes in 256-pixel tiles as before.
+# grid texture. Without the cache it takes 0.68-0.72 GiB more than 256-pixel tiles
+# (1.22-1.28 with it, where a B200 measured 1.43); reserve 1.0 GiB. A card that
+# cannot afford it decodes in 256-pixel tiles as before.
 SMALL_VAE_TILE, LARGE_VAE_TILE = 256, 512
-_LARGE_TILE_DECODE_EXTRA = 1.6 * GiB
+_LARGE_TILE_DECODE_EXTRA = 1.0 * GiB
 # Reference images, about 1 MP each after resizing. Their tokens are recomputed at
 # every step (the pipeline keeps no prefix key/value cache: it would hold about
 # 2 GiB per reference on the card, and the extra compute is about 1 s per image on
@@ -81,7 +85,7 @@ MIN_HOST_WORKING = 4 * GiB        # beyond the weights: images, tokenizer, the p
 
 @dataclass(frozen=True)
 class ImagePlan:
-    dit_resident_layers: int
+    dit_resident_layers: int      # on the card while denoising
     te_resident_layers: int
     vae_tiling: bool
     host_mode: str                # 'pinned' | 'pageable' | 'insufficient'
@@ -94,19 +98,26 @@ class ImagePlan:
     link_floor_seconds: object
     reasons: list = field(default_factory=list)
     vae_tile_size: int = SMALL_VAE_TILE
+    # Of those, kept on the card through the other stages and between requests;
+    # the rest are released after denoising and filled again by the next one.
+    dit_kept_layers: int = None
 
     def to_dict(self):
         return dict(self.__dict__)
 
 
 def stage_peaks(shape, dit_resident, te_resident, *, width, height, reference_pixels=0, vae_tiling=True,
-                vae_tile_size=SMALL_VAE_TILE):
-    """Largest allocation of each stage for a given residency (bytes)."""
+                vae_tile_size=SMALL_VAE_TILE, dit_kept=None):
+    """Largest allocation of each stage for a given residency (bytes).
+
+    ``dit_kept`` blocks stay on the card outside denoising (default: all of them).
+    """
     mp = width * height / 1e6
     ref_mp = reference_pixels / 1e6
-    resident = dit_resident * shape.dit_block_bytes + te_resident * shape.te_layer_bytes
+    kept = dit_resident if dit_kept is None else min(dit_kept, dit_resident)
+    resident = kept * shape.dit_block_bytes + te_resident * shape.te_layer_bytes
     encode = _ENCODE_BASE + resident
-    denoise = _DENOISE_BASE + _DENOISE_PER_MP * mp + resident
+    denoise = _DENOISE_BASE + _DENOISE_PER_MP * mp + resident + (dit_resident - kept) * shape.dit_block_bytes
     decode = _DECODE_BASE + _DECODE_PER_MP * mp + resident
     if not vae_tiling:
         decode += _UNTILED_DECODE_PER_MP * mp
@@ -124,11 +135,16 @@ def stage_peaks(shape, dit_resident, te_resident, *, width, height, reference_pi
 
 def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, height=1024,
                reference_pixels=0, shape=None, link_bytes_per_second=None):
-    """Choose residency for one request.
+    """Choose the decoding and the residency for one request.
 
-    DiT blocks come first: each is read every step (8 times per image), a
-    text-encoder layer once. ``host_available_bytes`` is what the host can lock
-    or hold now (``offload.live_pin_capacity``); None means it was not read and
+    The decoding comes first: whole-image decoding is several times faster than
+    512-pixel tiles, and those than 256-pixel ones, far more than a resident
+    block saves. Then DiT blocks for denoising, where each is read every step
+    (8 times per image); of those, the ones the other stages leave room for stay
+    on the card between requests, the rest are filled again on the next first
+    step. Text-encoder layers, read once per request, come last and only when
+    every block stays. ``host_available_bytes`` is what the host can lock or
+    hold now (``offload.live_pin_capacity``); None means it was not read and
     the plan assumes it fits.
     """
     shape = shape or ImageShape()
@@ -137,36 +153,37 @@ def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, heigh
     reasons = []
     kwargs = dict(width=width, height=height, reference_pixels=reference_pixels)
 
-    tile_size = LARGE_VAE_TILE
+    def peaks(kd, kt, tiling, tile_size, kept=None):
+        return stage_peaks(shape, kd, kt, vae_tiling=tiling, vae_tile_size=tile_size, dit_kept=kept, **kwargs)
 
-    def peak(kd, kt, tiling=True):
-        return max(stage_peaks(shape, kd, kt, vae_tiling=tiling, vae_tile_size=tile_size, **kwargs).values())
+    def fits(kd, kt, tiling, tile_size, kept=None):
+        return max(peaks(kd, kt, tiling, tile_size, kept).values()) <= limit
 
-    kd = kt = 0
-    tiling = True
-    if peak(0, 0) > limit:
-        tile_size = SMALL_VAE_TILE
-    feasible = peak(0, 0) <= limit
+    kd = kt = kept = 0
+    tiling, tile_size = True, SMALL_VAE_TILE
+    for option in ((False, LARGE_VAE_TILE), (True, LARGE_VAE_TILE), (True, SMALL_VAE_TILE)):
+        if fits(0, 0, *option):
+            tiling, tile_size = option
+            break
+    feasible = fits(0, 0, tiling, tile_size)
     if not feasible:
         reasons.append('even full streaming with a tiled VAE needs %.1f GiB beyond the %.1f GiB budget' % (
-            (peak(0, 0) + margin) / GiB, gpu_budget_bytes / GiB))
+            (max(peaks(0, 0, tiling, tile_size).values()) + margin) / GiB, gpu_budget_bytes / GiB))
     else:
-        # Largest DiT residency that fits, then text-encoder layers with what is left.
-        kd = max(k for k in range(shape.dit_blocks + 1) if peak(k, 0) <= limit)
+        kd = max(k for k in range(shape.dit_blocks + 1) if fits(k, 0, tiling, tile_size, kept=0))
+        kept = max(k for k in range(kd + 1) if fits(kd, 0, tiling, tile_size, kept=k))
         # Encoder layers are read once per request, blocks eight times: only
-        # when every block is resident does leftover room go to the encoder.
-        if kd == shape.dit_blocks:
-            kt = max(k for k in range(shape.te_layers + 1) if peak(kd, k) <= limit)
-        # Untiled decoding is faster; take it only when it fits beside the same residency.
-        if peak(kd, kt, tiling=False) <= limit:
-            tiling = False
-    peaks = stage_peaks(shape, kd, kt, vae_tiling=tiling, vae_tile_size=tile_size, **kwargs)
+        # when every block stays does leftover room go to the encoder.
+        if kept == shape.dit_blocks:
+            kt = max(k for k in range(shape.te_layers + 1) if fits(kd, k, tiling, tile_size))
+    peaks_now = peaks(kd, kt, tiling, tile_size, kept)
 
     streamed_dit = (shape.dit_blocks - kd) * shape.dit_block_bytes
     streamed_te = (shape.te_layers - kt) * shape.te_layer_bytes
+    refilled = (kd - kept) * shape.dit_block_bytes
     floor = None
     if link_bytes_per_second:
-        floor = (streamed_dit * shape.steps + streamed_te) / link_bytes_per_second
+        floor = (streamed_dit * shape.steps + refilled + streamed_te) / link_bytes_per_second
 
     host_mode = 'pinned'
     if host_available_bytes is not None:
@@ -181,6 +198,6 @@ def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, heigh
             reasons.append('host memory cannot hold the weights (%.1f GiB needed)' % (need / GiB))
     return ImagePlan(dit_resident_layers=kd, te_resident_layers=kt, vae_tiling=tiling,
                      host_mode=host_mode, feasible=feasible and host_mode != 'insufficient',
-                     peak_allocated_bytes=max(peaks.values()), stage_peaks=peaks, margin_bytes=margin,
+                     peak_allocated_bytes=max(peaks_now.values()), stage_peaks=peaks_now, margin_bytes=margin,
                      dit_streamed_bytes_per_step=streamed_dit, te_streamed_bytes=streamed_te,
-                     link_floor_seconds=floor, reasons=reasons, vae_tile_size=tile_size)
+                     link_floor_seconds=floor, reasons=reasons, vae_tile_size=tile_size, dit_kept_layers=kept)

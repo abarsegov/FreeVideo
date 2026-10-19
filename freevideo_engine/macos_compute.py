@@ -82,6 +82,10 @@ def sequence_tokens(canvas, prompt_rows):
                 audio=MINIMAX_H3_AUDIO_CHANNELS * audio_latent_num_frames(canvas['frames']),
                 reference_video=canvas.get('reference_video_tokens', 0),
                 reference_audio=canvas.get('reference_audio_tokens', 0))
+    if 'continuation_tokens' in canvas:
+        # Additional resident prefix copies and row-time workspace; the prefix
+        # itself occupies generated rows rather than changing the packed layout.
+        rows['continuation_context'] = canvas['continuation_tokens']
     if any(type(value) is not int or value < 0 for value in rows.values()):
         raise ValueError('Packed row counts must be nonnegative integers')
     return dict(rows, total=sum(rows.values()))
@@ -135,7 +139,7 @@ def generated_audio_tokens(frames):
 
 
 def request_admission(resource, sampling, *, preview=False, working_set_bytes=None, reference_tokens=0,
-                      text_tokens=None):
+                      text_tokens=None, continuation=None):
     """Before any model loads: does this request's largest sampling pass fit?
 
     Each sampling stage plans against the request's allocator capacity, live
@@ -159,7 +163,19 @@ def request_admission(resource, sampling, *, preview=False, working_set_bytes=No
     canvas = sampling['second' if phase == 'refinement' else 'first']
     shape = geometry(canvas['width'], canvas['height'], frames=canvas['frames'])
     conditioning_tokens = 1024 if text_tokens is None else text_tokens + generated_audio_tokens(canvas['frames'])
-    tokens, frames = shape['video_tokens'] + conditioning_tokens + reference_tokens, shape['latent_frames']
+    continuation_tokens = 0
+    if continuation is not None:
+        from .continuation import LATENT_FRAMES
+        continuation_tokens = (LATENT_FRAMES * (canvas['width'] // 32) * (canvas['height'] // 32)
+                               + 2 * continuation['audio_latents'])
+        if 'tail' in continuation:
+            # Encoding both canvases and the 15 s sound window precedes model loading.
+            from .continuation_tail import AUDIO_WINDOW_TICKS
+            first = sampling['first']
+            continuation_tokens += (LATENT_FRAMES * (first['width'] // 32) * (first['height'] // 32)
+                                    + 2 * AUDIO_WINDOW_TICKS)
+    tokens, frames = (shape['video_tokens'] + conditioning_tokens + reference_tokens + continuation_tokens,
+                      shape['latent_frames'])
     needed = bounded_working_bytes(tokens, frames=frames) + GiB + LAYER_BYTES + PREFETCH_BYTES
     capacity, allowance = resource['allocator_capacity_bytes'], resource['allocator_bytes']
     if working_set_bytes is not None:
@@ -168,7 +184,7 @@ def request_admission(resource, sampling, *, preview=False, working_set_bytes=No
     return dict(state=state, phase=phase, needed_bytes=int(needed), allowance_bytes=int(allowance),
                 capacity_bytes=int(capacity), tokens=tokens, width=canvas['width'], height=canvas['height'],
                 frames=canvas['frames'], working_set_bytes=working_set_bytes, reference_tokens=reference_tokens,
-                text_tokens=text_tokens,
+                text_tokens=text_tokens, continuation_tokens=continuation_tokens,
                 scope='Smallest grouped-projection plan of the largest sampling pass, before model load.')
 
 

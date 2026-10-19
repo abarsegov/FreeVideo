@@ -116,8 +116,10 @@ def build_pyinstaller(command, out, *, onefolder):
         options += ['--runtime-hook', str(ROOT / 'scripts/pyi_rth_bundle_data.py')]
     subprocess.run([sys.executable, '-m', 'PyInstaller.utils.cliutils.makespec', *options], cwd=ROOT, check=True)
     spec = out / 'FreeVideo.spec'
+    from scripts.source_build import spec_hook
+    injection = spec_hook(ROOT, out / 'engine-source', out / 'launcher-build.json')
     if not onefolder:
-        injection = f'''
+        pruning = f'''
 import sys
 sys.path.insert(0, {str(ROOT)!r})
 from scripts.prune_qt_bundle import prune_qt_toc, write_prune_report
@@ -126,13 +128,15 @@ a.binaries, removed_binaries = prune_qt_toc(a.binaries)
 a.datas, removed_data = prune_qt_toc(a.datas)
 write_prune_report({str(out)!r}, dict(files=removed_binaries['files'] + removed_data['files'],
     bytes=removed_binaries['bytes'] + removed_data['bytes']))
+'''
+        injection = pruning + injection + f'''
 a.datas, deduplicated = deduplicate_toc(a.datas, {str(out)!r})
 write_data_report({str(out)!r}, deduplicated)
 '''
-        text = spec.read_text(encoding='utf-8')
-        if text.count('pyz = PYZ(') != 1:
-            raise ValueError('Unexpected PyInstaller spec layout')
-        spec.write_text(text.replace('pyz = PYZ(', injection + '\npyz = PYZ('), encoding='utf-8')
+    text = spec.read_text(encoding='utf-8')
+    if text.count('pyz = PYZ(') != 1:
+        raise ValueError('Unexpected PyInstaller spec layout')
+    spec.write_text(text.replace('pyz = PYZ(', injection + '\npyz = PYZ('), encoding='utf-8')
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm',
                     '--distpath', str(out / 'dist'), '--workpath', str(out / 'build'), str(spec)],
                    cwd=ROOT, check=True)

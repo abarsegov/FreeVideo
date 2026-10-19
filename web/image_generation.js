@@ -3,6 +3,7 @@
 import * as commands from './image_commands.js';
 import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.js';
 import {saveReport, reportIssue, showReportTip} from './report_issue.js';
+import {issueButton} from './issue_button.js';
 import {about} from './request_assets.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
@@ -26,14 +27,17 @@ export function blankCanvasRatio(target) {
         return target?.width > 0 && target?.height > 0 && target.width * h === target.height * w;
     }) || BLANK_CANVAS_RATIOS[0];
 }
-export function blankCanvasSize(ratio, sizes = null) {
+// 高清 is a square side of 1280 against 1024 (about 1.6 times the pixels).
+export const BLANK_CANVAS_AREAS = Object.freeze({standard: 1024, high: 1280});
+export function blankCanvasSize(ratio, sizes = null, tier = 'standard') {
     if (!BLANK_CANVAS_RATIOS.includes(ratio)) ratio = BLANK_CANVAS_RATIOS[0];
     if (sizes?.[ratio]) {
         const [width, height] = sizes[ratio];
         return {width, height};
     }
     const [w, h] = ratio.split(':').map(Number);
-    const units = Math.floor(Math.sqrt(1024 ** 2 / (w * h * 32 ** 2)));
+    const side = BLANK_CANVAS_AREAS[tier] || BLANK_CANVAS_AREAS.standard;
+    const units = Math.floor(Math.sqrt(side ** 2 / (w * h * 32 ** 2)));
     return {width: w * units * 32, height: h * units * 32};
 }
 const failure = (code, info = {}) => Object.assign(new Error(code || 'generation_failed'), {
@@ -69,9 +73,10 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
     }
     return {
         info,
-        async generate({prompt, width, height, images = [], mask, seed}) {
+        async generate({prompt, width, height, images = [], mask, seed, cast_view}) {
             const value = await post('generate', {[p.prompt]: prompt, [p.width]: width, [p.height]: height,
-                [p.images]: images, ...(mask ? {[p.mask]: mask} : {}), ...(seed === undefined ? {} : {[p.seed]: seed})});
+                [p.images]: images, ...(mask ? {[p.mask]: mask} : {}), ...(seed === undefined ? {} : {[p.seed]: seed}),
+                ...(cast_view === 'back' ? {cast_view} : {})});
             return {...value, job: value[p.job]};
         },
         async status(job) {
@@ -91,6 +96,10 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
         async segment({image, points}) { return post('segment', {image, points}); },
         segmentInstall: () => post('segment-install', {}),
         segmentCancel: () => post('segment-cancel', {}),
+        // Every picture generated on this machine, newest first; the engine keeps them in a folder.
+        async history() { return (await post('history', {})).items || []; },
+        async historyDelete(file) { return (await post('history-delete', {file})).items || []; },
+        historyOpen: () => post('history-open', {}),
         // The prompts and sizes of a new character's five pictures (the Agent's cards use the same ones).
         castViews: async description => (await post('cast-views', {description})).views,
         async upload(file) {
@@ -214,16 +223,19 @@ export function renderImageFailure(host, {error, report_id, stage, fitted} = {},
     const anchor = doc.createElement('button'); anchor.type = 'button';
     anchor.className = 'fv-action fv-action-secondary fv-action-report';
     anchor.textContent = t(...REPORT_LABELS.download); anchor.title = t(...REPORT_LABELS.description);
+    const issue = issueButton(t, () => ({where: ['Image diagnostic report', '生图诊断报告'], message: t(...REPORT_LABELS.unavailable)}));
+    issue.hidden = true;
     anchor.onclick = async () => {
         if (anchor.disabled) return;
         const restoreFocus = doc.activeElement === anchor;
+        issue.hidden = true;
         anchor.disabled = true; anchor.textContent = t(...REPORT_LABELS.preparing);
         try {
             await saveReport(await fetchReport());
             if (card.isConnected) showReportTip(bar, anchor, t, {mode: 'downloaded',
                 submit: () => reportIssue(fetchReport, version(), {save: false}), onHide: () => anchor.focus()});
             anchor.textContent = t(...REPORT_LABELS.download);
-        } catch { anchor.textContent = t(...REPORT_LABELS.unavailable); }
+        } catch { anchor.textContent = t(...REPORT_LABELS.unavailable); issue.hidden = false; }
         finally {
             anchor.disabled = false;
             if (restoreFocus && card.isConnected && doc.activeElement === doc.body) anchor.focus({preventScroll: true});
@@ -234,7 +246,7 @@ export function renderImageFailure(host, {error, report_id, stage, fitted} = {},
     card.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
     });
-    bar.append(anchor); card.append(bar);
+    bar.append(anchor, issue); card.append(bar);
     return card;
 }
 export function imagePackUnavailableMessage(info, t) {
@@ -517,8 +529,8 @@ export function imageJobStore(key, storage = globalThis.sessionStorage, now = Da
 }
 
 export function createImageGeneration({client, renderer, t, getDoc, getSelection, commit, el, button, segmented,
-    library = [], resolve = file => file, icon = () => '', onRatioChange, productVersion, fetchApi, resumeKey = null}) {
-    let mode = 'edit', prompt = '', mounted = null, references = [];
+    library = [], resolve = file => file, icon = () => '', onRatioChange, onPlace, productVersion, fetchApi, resumeKey = null}) {
+    let mode = 'edit', prompt = '', mounted = null, references = [], tier = 'standard', past = [];
     let promptRequired = false, attentionTimer = null;
     const copies = new Map();
     // A reference is sent no larger than the largest picture the service makes.
@@ -616,9 +628,62 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         }
         menu.append(summary, choices); refs.append(menu);
     }
+    // Every picture made on this machine: place one on the canvas, use it as a reference, delete it,
+    // or show the folder that holds them.
+    function historyMenu() {
+        const menu = el('details', null, 'fv-ie-menu fv-ie-gen-history');
+        const summary = el('summary'); summary.innerHTML = icon('history', 16);
+        summary.title = t('History', '历史'); summary.setAttribute('aria-label', summary.title);
+        const list = el('div', null, 'fv-ie-menu-list');
+        menu.append(summary, list);
+        const draw = () => {
+            list.replaceChildren();
+            if (!past.length) { list.append(el('div', t('No images generated yet', '还没有生成过图片'), 'fv-ie-menu-label')); return; }
+            const grid = el('div', null, 'fv-ie-gen-history-grid');
+            for (const item of past) {
+                const tile = el('div', null, 'fv-ie-gen-history-tile');
+                const place = button('', item.name, () => { menu.open = false; onPlace?.(item.file, item.name); }, 'fv-ie-gen-history-pick');
+                const picture = el('img'); picture.src = resolve(item.file); picture.alt = item.name; picture.loading = 'lazy';
+                place.append(picture); tile.append(place);
+                if (mode === 'edit' && getDoc().layers.length && limit() > 1) {
+                    const use = button('+', t('Use as reference', '用作参考图'), () => {
+                        references = addReference(references, {file: item.file, label: item.name}, limit()); menu.open = false; update();
+                    }, 'fv-ie-gen-history-use');
+                    use.setAttribute('aria-label', use.title); tile.append(use);
+                }
+                let armed = null;
+                const remove = button('×', t('Delete', '删除'), async () => {
+                    if (!armed) {
+                        remove.textContent = t('Delete', '删除'); remove.classList.add('fv-ie-gen-history-confirm');
+                        armed = setTimeout(() => { armed = null; remove.textContent = '×'; remove.classList.remove('fv-ie-gen-history-confirm'); }, 3000);
+                        return;
+                    }
+                    clearTimeout(armed);
+                    try { past = await client.historyDelete(item.file); } catch { return; }
+                    draw();
+                }, 'fv-ie-gen-ref-remove fv-ie-gen-history-delete');
+                remove.setAttribute('aria-label', remove.title); tile.append(remove);
+                grid.append(tile);
+            }
+            list.append(grid);
+            if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname))
+                list.append(button(t('Open folder', '打开文件夹'), null, () => { void client.historyOpen().catch(() => {}); }, 'fv-ie-menu-item'));
+        };
+        menu.ontoggle = async () => {
+            if (!menu.open) return;
+            try { past = await client.history(); } catch { past = []; }
+            draw();
+            // Open upward when the list does not fit below, and keep it inside the window.
+            list.classList.remove('fv-ie-gen-history-up'); list.style.right = '';
+            const box = list.getBoundingClientRect();
+            if (box.bottom > innerHeight - 8 && menu.getBoundingClientRect().top > box.height) list.classList.add('fv-ie-gen-history-up');
+            if (box.left < 8) list.style.right = (box.left - 8) + 'px';
+        };
+        return menu;
+    }
     function update() {
         if (!mounted?.bar.isConnected) return;
-        const {input, action, note, meter, fill, group, bar, refs, ratio} = mounted, state = session.state();
+        const {input, action, note, meter, fill, group, bar, refs, ratio, size} = mounted, state = session.state();
         const missing = !state.running && state.info && !state.info.installed;
         const disabled = state.running || state.checking || !state.info?.installed;
         const empty = !getDoc().layers.length;
@@ -627,6 +692,10 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         if (ratio) {
             ratio.hidden = !empty; ratio.disabled = state.running;
             ratio.value = BLANK_CANVAS_RATIOS.includes(getDoc().ratio) ? getDoc().ratio : blankCanvasRatio(getDoc());
+            const tiers = state.info?.sizes?.includes('high') ? ['standard', 'high'] : ['standard'];
+            if (!tiers.includes(tier)) tier = 'standard';
+            size.hidden = !empty || tiers.length < 2; size.set(tier);
+            size.querySelectorAll('button').forEach(b => { b.disabled = state.running; });
         }
         group.querySelectorAll('button').forEach(b => {
             b.disabled = disabled || (empty && b.dataset.value === 'edit');
@@ -673,24 +742,30 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         bar.classList.add('fv-ie-generation');
         const group = segmented([['edit', t('Edit this', '改这张')], ['new', t('New image', '生成一张')]], mode,
             value => { mode = value; update(); }, t('Generate with AI', 'AI 生成')).group;
-        let ratio = null;
+        let ratio = null, size = null, shape = null;
         if (!getDoc().layers.length) {
+            shape = el('div', null, 'fv-ie-gen-shape');
             ratio = el('select', null, 'fv-ie-select'); ratio.id = 'fv-ie-gen-ratio';
             ratio.setAttribute('aria-label', t('Shape', '比例'));
             for (const value of BLANK_CANVAS_RATIOS) {
                 const option = el('option', value); option.value = value; ratio.append(option);
             }
-            ratio.onchange = () => {
-                if (!getDoc().layers.length && !session.state().running) onRatioChange?.(ratio.value);
+            const seg = segmented([['standard', t('Standard', '标准')], ['high', t('HD', '高清')]], tier,
+                value => { tier = value; changed(); }, t('Size', '尺寸'));
+            size = seg.group; size.id = 'fv-ie-gen-size'; size.set = seg.set;
+            const changed = () => {
+                if (!getDoc().layers.length && !session.state().running) onRatioChange?.(ratio.value, tier);
                 update();
             };
+            ratio.onchange = changed;
+            shape.append(ratio, size);
         }
         const field = el('div', null, 'fv-ie-gen-field');
         const refs = el('div', null, 'fv-ie-gen-refs'); refs.setAttribute('role', 'list');
         refs.setAttribute('aria-label', t('Reference images', '参考图'));
         const box = el('div', null, 'fv-ie-gen-box');
         const input = el('textarea', null, 'fv-ie-gen-prompt'); input.rows = 1; input.maxLength = 2000; input.value = prompt;
-        box.append(input); field.append(refs, box);
+        box.append(input); field.append(refs, box, historyMenu());
         const note = el('div', '', 'fv-ie-opt-note fv-ie-gen-note'); note.setAttribute('role', 'status');
         const action = button(t('Generate', '生成'), null, () => {
             const now = session.state(), pack = !now.running && now.info && !now.info.installed ? packView(now.info, t) : null;
@@ -701,9 +776,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         meter.setAttribute('role', 'progressbar'); meter.setAttribute('aria-label', t('Generate with AI', 'AI 生成'));
         meter.setAttribute('aria-valuemin', '0'); meter.setAttribute('aria-valuemax', '100');
         bar.append(group);
-        if (ratio) bar.append(ratio);
+        if (shape) bar.append(shape);
         bar.append(field, note, action, meter);
-        mounted = {bar, input, action, note, meter, fill, group, refs, ratio};
+        mounted = {bar, input, action, note, meter, fill, group, refs, ratio, size};
         const grow = () => {
             input.style.height = '0px';
             input.style.height = (prompt.trim() ? Math.min(80, Math.max(32, input.scrollHeight + 2)) : 32) + 'px';

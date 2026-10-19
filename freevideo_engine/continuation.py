@@ -34,7 +34,7 @@ MISSING = 'The previous video has no usable continuation data. Generate it again
 SIZE_MISMATCH = 'Use the same aspect ratio as the previous video.'
 # Every refusal starts with UNSUPPORTED, then says what to change.
 UNSUPPORTED = 'Continue from video cannot be used with these settings.'
-UNSUPPORTED_DEVICE = UNSUPPORTED + ' Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".'
+UNSUPPORTED_DEVICE = UNSUPPORTED + ' Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".'
 UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on "Two-pass acceleration" and turn off the first-pass preview.'
 UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear either "Second pass of preview" or "Continue from video".'
 UNSUPPORTED_MEDIA = UNSUPPORTED + ' Connect up to 3 pictures as references, and remove video, audio and pre-encoded inputs.'
@@ -75,8 +75,6 @@ def audio_context():
 
 def supported():
     """Platform capability, without loading Torch or probing a GPU."""
-    if sys.platform == 'darwin':
-        return False, 'macos'
     from .paths import data_root
     try:
         machine = json.loads((data_root() / 'machine.json').read_text(encoding='utf-8'))
@@ -84,7 +82,7 @@ def supported():
         machine = {}
     if not isinstance(machine, dict):
         machine = {}
-    if machine.get('device_backend', 'cuda') != 'cuda':
+    if machine.get('device_backend', 'cuda') not in ('cuda', 'mps'):
         return False, 'unsupported_device'
     return True, None
 
@@ -108,7 +106,7 @@ def validate_route(*, task='t2va', two_pass=True, preview=False, refine_from=Non
     valid_task = task == ('ref2va' if anchor else 't2va')
     if sound:
         valid_task = valid_reference and task in (('ref2va', 'ref2va_av') if anchor else ('t2va', 'ref2va', 'ref2va_audio'))
-    if not supported()[0] or backend not in (None, 'cuda'):
+    if not supported()[0] or backend not in (None, 'cuda', 'mps'):
         raise ValueError(UNSUPPORTED_DEVICE)
     if refine_from:
         raise ValueError(UNSUPPORTED_REFINE)

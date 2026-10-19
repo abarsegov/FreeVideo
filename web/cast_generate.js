@@ -31,7 +31,7 @@ export function createCastGenerator({client, onChange = () => {}, schedule = set
     async function runOne(index, alive) {
         const view = plan[index], front = state.pictures[0].file;
         const row = await client.generate({prompt: view.prompt, width: view.width, height: view.height, seed,
-            images: view.from_front ? [front] : []});
+            images: view.from_front ? [front] : [], ...(view.view === 'back' ? {cast_view: 'back'} : {})});
         if (!row.job) throw Object.assign(new Error(row.error || 'generation_failed'), {code: row.error, report_id: row.report_id});
         if (!alive()) { await cancelJob(row.job); return null; }
         job = row.job;

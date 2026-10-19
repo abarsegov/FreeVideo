@@ -29,8 +29,9 @@ _VIEW_TEXT = {
                       'with both eyes visible.'),
     'side': ('将图1中的同一个人完全转向画面左边，呈现90度正侧面。鼻尖、胸口、脚尖朝向画面左边，'
              '只能看见一只眼睛，近侧肩膀遮住远侧肩膀。'),
-    'back': ('Turn the person in image 1 all the way around. Show the back of the head and body. '
-             'The face is hidden. Show the back of the clothes, without front buttons or a shirt opening.'),
+    'back': ('将图1中的同一个人整个身体转过180度，完全背对镜头。'
+             '头、肩膀、躯干、臀部和双脚一起转过去，后脑勺、发旋、颈后、背部、肩胛骨、臀部和脚后跟朝向镜头。'
+             '头和身体方向一致。看不到脸、胸口、衣服前襟、前面的扣子或衣领开口，耳朵只露边缘。只展示衣服背面。'),
     'face': 'front-facing face close-up, framed from shoulders upward, centered head, eyes looking at the camera, neutral expression',
 }
 

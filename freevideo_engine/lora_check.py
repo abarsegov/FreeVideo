@@ -145,6 +145,8 @@ def assess(shapes, *, int8_targets=None, skipped=None):
             if int8_targets is not None:
                 target = resolve_target(target, int8_targets)
                 reason = int8_skip_reason(target, int8_targets)
+                if reason == 'other_layer' and family(keys):
+                    return _bad('other-model', keys, layer=name)
                 if reason:
                     skipped.append((reason, target))
                     continue
@@ -167,6 +169,8 @@ def assess(shapes, *, int8_targets=None, skipped=None):
         for target, split, swap in _targets(name):
             if int8_targets is not None:
                 target = resolve_target(target + ('#bias' if bias else ''), int8_targets)
+                if int8_skip_reason(target, int8_targets, full=True) == 'other_layer' and family(keys):
+                    return _bad('other-model', keys, layer=name)
                 skipped.append((int8_skip_reason(target, int8_targets, full=True), target))
                 continue
             found = _find(target)

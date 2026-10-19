@@ -10,6 +10,7 @@ import {FONT_KEYS, fontStack, fontLoaded, loadFont, loadFonts} from './fonts.js'
 import {api} from '../../scripts/api.js';
 import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio, segmentAt} from './image_generation.js';
 import {productVersion} from './updates.js';
+import {issueButton} from './issue_button.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./image_editor.css', import.meta.url).href;
@@ -52,6 +53,7 @@ export const ICONS = {
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     unlink: '<path d="m18.84 12.25 1.72-1.71h-.02a5 5 0 0 0-.12-7.07 5 5 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5 5 0 0 0 .12 7.07 5 5 0 0 0 6.95 0l1.71-1.71"/><path d="M8 2v3M2 8h3M16 19v3M19 16h3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5L5 20"/>',
     copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
@@ -134,7 +136,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const baseImage = hasOriginal ? await loadImage(resolve(source)) : null;
     const renderer = new Renderer(resolve);
     const fresh = !edit;
-    const blankSizeForRatio = ratio => blankCanvasSize(ratio, null);
+    const blankSizeForRatio = (ratio, tier = 'standard') => blankCanvasSize(ratio, null, tier);
     const blankSize = edit || (target?.width > 0 && target?.height > 0 ? target : blankSizeForRatio('16:9'));
     const original = () => {
         if (!hasOriginal) return blankDocument(blankSize, edit?.ratio || blankCanvasRatio(target));
@@ -229,7 +231,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const genClient = imageGenClient || createImageGenClient(api.fetchApi.bind(api));
     const generation = createImageGeneration({client: genClient,
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
-        library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio, onPlace: (file, label) => addImageLayer(file, label), productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
         resumeKey: `${role}|${source || ''}|${name}`});
 
     // ----- tools ----------------------------------------------------------------
@@ -920,14 +922,14 @@ export async function openImageEditor({source = null, name = source || '', targe
             commitInserted(commands.addImageLayer(doc, {src: file, nw: img.naturalWidth, nh: img.naturalHeight,
                 name: label || file.split('/').pop()}));
             select('move');
-        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。')); }
+        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。'), ['Image editor', '图片编辑器']); }
     }
     filePicker.onchange = async () => {
         const file = filePicker.files?.[0]; filePicker.value = '';
         if (!file || !upload) return;
         message(t('Uploading the image…', '正在上传图片…'));
         try { const result = await upload(file); message(''); await addImageLayer(result.file, file.name); }
-        catch (error) { message(error.message || t('Upload failed.', '上传失败。')); }
+        catch (error) { message(error.message || t('Upload failed.', '上传失败。'), ['Image editor upload', '图片编辑器上传']); }
     };
     function duplicateLayer() {
         const layer = active();
@@ -956,9 +958,9 @@ export async function openImageEditor({source = null, name = source || '', targe
     }
 
     // ----- canvas: shape, orientation, size ----------------------------------------------
-    function setBlankCanvasRatio(ratio, resumed = false) {
+    function setBlankCanvasRatio(ratio, tier = 'standard', resumed = false) {
         if (doc.layers.length || (!resumed && generation.state().running)) return;
-        const next = blankDocument(blankSizeForRatio(ratio), ratio);
+        const next = blankDocument(blankSizeForRatio(ratio, tier), ratio);
         followSize(doc, next); deselectQuiet(); commit(next);
     }
     function aspectOf(id, r = rect()) {
@@ -1253,7 +1255,7 @@ export async function openImageEditor({source = null, name = source || '', targe
                 addPart({shape: 'mask', layer: src.id, file, upto: src.ops.length}, how); message('');
             }).catch(error => {
                 message(error?.code === 'busy_video' ? t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。')
-                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'));
+                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'), error?.code === 'busy_video' ? null : ['Image object selection', '图片智能抠图']);
             }).finally(() => { pointBusy = false; });
             return null;
         }
@@ -1547,6 +1549,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
         // Nothing typed here reaches ComfyUI's canvas shortcuts behind the dialog.
         if (event.key !== 'Escape' && event.key !== 'Tab') event.stopPropagation();
+        if (event.target.closest?.('.fv-issue-button')) return;
         if (typing) { if (mod && key === 'enter') { event.preventDefault(); finish(); } return; }
         if (mod && key === 'z') { event.preventDefault(); step(event.shiftKey ? 1 : -1); return; }
         if (mod && key === 'y') { event.preventDefault(); step(1); return; }
@@ -1607,7 +1610,12 @@ export async function openImageEditor({source = null, name = source || '', targe
     let resolveResult;
     const result = new Promise(r => { resolveResult = r; });
     let messageTimer = null;
-    function message(text) { status.textContent = text; clearTimeout(messageTimer); if (text) messageTimer = setTimeout(() => { status.textContent = ''; }, 5000); }
+    function message(text, where = null) {
+        status.textContent = text;
+        if (text && where) status.append(issueButton(t, () => ({where, message: text})));
+        clearTimeout(messageTimer);
+        if (text) messageTimer = setTimeout(() => { status.textContent = ''; }, where ? 20000 : 5000);
+    }
     async function leave() {
         void generation.cancel();
         if (healing) await healing;
@@ -1627,7 +1635,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             const {blob, width, height} = await renderer.export(doc, extension === 'jpg' ? 'image/jpeg' : 'image/png');
             close({blob, name: name ? `${stem}-edit.${extension}` : `${stem}.${extension}`, edit: doc, width, height});
         } catch {
-            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'));
+            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'), ['Image editor save', '图片编辑器保存']);
             save.disabled = cancel.disabled = false;
         }
     }

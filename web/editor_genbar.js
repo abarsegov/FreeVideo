@@ -3,6 +3,7 @@ import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
 import {createExpandButton} from './editor_expand.js';
 import {createRequestAssets} from './request_assets.js';
+import {issueButton} from './issue_button.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
@@ -62,12 +63,13 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     // What goes wrong with a reference picture is said above the "+", where the eyes are, not in the page-wide line.
     const refNotice = el('div', 'fv-ed-ref-notice'); refNotice.hidden = true; refNotice.setAttribute('role', 'status');
     let refNoticeTimer = null;
-    const sayAtRefs = text => {
+    const sayAtRefs = (text, where = null) => {
         clearTimeout(refNoticeTimer);
         if (!text || disposed) { refNotice.hidden = true; return; }
         refNotice.textContent = text; refNotice.hidden = false;
+        if (where) refNotice.append(issueButton(t, () => ({where, message: text})));
         refNotice.style.left = Math.max(0, (references?.element.getBoundingClientRect().left || 0) - host.getBoundingClientRect().left) + 'px';
-        refNoticeTimer = setTimeout(() => { refNotice.hidden = true; }, 9000);
+        refNoticeTimer = setTimeout(() => { refNotice.hidden = true; }, where ? 20000 : 9000);
     };
     const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: value => actions.error(value, null, sayAtRefs), notify: sayAtRefs}) : null;
     if (references) { description.before(references.element); host.append(refNotice); }
@@ -83,15 +85,16 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             await actions.downloadFailureReport?.(id, {bar: failureBar, anchor: report.hidden ? failureReason : report, t,
                 current: () => !disposed && failureId === id && !failure.hidden});
         } catch (value) {
-            say(t(`Downloading the diagnostic report failed: ${value.message || value}`, `下载诊断报告时出错：${value.message || value}`));
+            actions.notify?.(t(`Downloading the diagnostic report failed: ${value.message || value}`, `下载诊断报告时出错：${value.message || value}`), ['Editor diagnostic report', '剪辑器诊断报告']);
         } finally { downloading = false; report.disabled = false; }
     }
     report.onclick = () => downloadFailure();
-    function say(text, queued = false) {
+    function say(text, queued = false, where = null) {
         if (disposed) return;
         queuedAt = text && queued ? progressKey() : null;
         clearTimeout(noteTimer); note.textContent = text || ''; note.hidden = !text;
-        if (text) noteTimer = setTimeout(() => { note.hidden = true; }, 6000);
+        if (text && where) note.append(issueButton(t, () => ({where, message: text})));
+        if (text) noteTimer = setTimeout(() => { note.hidden = true; }, where ? 20000 : 6000);
     }
     async function render() {
         if (disposed) return;
@@ -210,8 +213,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         // A specific reason is said once; the planning limits are already shown above.
         catch (error) { const result = actions.error(error, 'generate'); reason = result?.say || '';
-            if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say);
-            else if (!result && !note.textContent) { reason = t('Could not start. Try again.', '没能开始，请重试。'); say(reason); } }
+            if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say, false, ['Editor generation', '剪辑器生成']);
+            else if (!result && !note.textContent) { reason = t('Could not start. Try again.', '没能开始，请重试。'); say(reason, false, ['Editor generation', '剪辑器生成']); } }
         finally { pressing.delete(key); render(); }
         return reason;
     };

@@ -44,6 +44,7 @@
 .fv-ed-audio-icon{font-size:26px;color:var(--fv-muted)}
 .fv-editor .fv-ed-import{width:100%;height:auto;aspect-ratio:16/9;border:1px dashed var(--fv-border);border-radius:6px;background:transparent;color:var(--fv-muted);padding:0}
 .fv-ed-library-message{font-size:12px;color:var(--fv-muted);line-height:1.6}
+.fv-ed-source-card .fv-issue-button{font-size:11px;min-height:28px;max-width:100%}
 .fv-editor .fv-ed-preview{grid-column:2;grid-row:2;min-width:0;min-height:0;display:grid;place-items:center;padding:16px;overflow:hidden;background:var(--fv-bg);container-type:size}
 .fv-ed-picture{position:relative;width:min(100cqw,calc(100cqh * var(--fv-ed-width,16) / var(--fv-ed-height,9)));aspect-ratio:var(--fv-ed-width,16)/var(--fv-ed-height,9);background:#000;border-radius:8px;overflow:hidden}
 .fv-ed-picture[data-empty=true]{background:var(--fv-card);border:1px dashed color-mix(in srgb,var(--fv-ink) 28%,transparent)}
@@ -75,6 +76,8 @@
 .fv-ed-genbar[data-mode=running]>button:not(.fv-ed-generate){order:2}
 .fv-ed-gen-note{font-size:13px;color:var(--fv-ink);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-ed-gen-note[hidden]{display:none}
+.fv-ed-gen-note:has(.fv-issue-button){white-space:normal;overflow:visible}
+.fv-ed-gen-note .fv-issue-button,.fv-ed-library-message .fv-issue-button{margin-left:8px}
 .fv-ed-genbar .fv-request-assets{order:-2;flex:1 1 100%;min-width:0;font-size:12px;line-height:1.5}
 .fv-ed-genbar .fv-request-assets[hidden]{display:none}
 .fv-editor:has(.fv-ed-gen-failure:not([hidden])){--fv-ed-generation-row:max-content}
@@ -100,6 +103,7 @@
 .fv-ed-refs[hidden],.fv-ed-ref-menu[hidden]{display:none}
 .fv-ed-ref-notice{position:absolute;bottom:calc(100% + 8px);max-width:min(560px,calc(100% - 24px));border:1px solid var(--fv-border);background:var(--fv-card);padding:10px 14px;border-radius:8px;z-index:9;color:var(--fv-ink);pointer-events:none}
 .fv-ed-ref-notice[hidden]{display:none}
+.fv-ed-ref-notice .fv-issue-button{pointer-events:auto;margin-left:8px}
 .fv-ed-ref-chips{display:flex;align-items:center;gap:6px;max-width:min(240px,32vw);overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--fv-border) transparent;padding:1px}
 .fv-ed-ref-chips:empty{display:none}
 /* A strip that scrolls fades at the hidden end(s); one that fits is untouched. */
@@ -170,6 +174,7 @@
 .fv-editor .fv-ed-name-menu .fv-ed-delete-confirm:not(:disabled):is(:hover,:focus-visible){background:var(--fv-danger-subtle)}
 .fv-ed-delete-question{margin:6px 10px 10px;line-height:1.5;overflow-wrap:anywhere;white-space:normal}
 .fv-ed-notice{position:absolute;bottom:340px;right:16px;max-width:min(560px,calc(100vw - 32px));border:1px solid var(--fv-border);background:var(--fv-card);padding:10px 14px;border-radius:8px;z-index:9;color:var(--fv-ink)}
+.fv-ed-notice .fv-issue-button{margin-left:12px;vertical-align:middle;pointer-events:auto}
 @media(max-width:680px){
  .fv-studio.fv-editor{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(max(0px,calc(180px - var(--fv-ed-description-growth,0px))),1fr) 40px var(--fv-ed-generation-row,auto) 40px 236px;overflow:hidden}
  .fv-editor .fv-header{overflow-x:auto}

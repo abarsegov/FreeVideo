@@ -1,5 +1,7 @@
 import {editorIcon} from './editor_icons.js';
 import {sourceKey} from './editor_store.js';
+import {issueButton} from './issue_button.js';
+const LIBRARY_ISSUE = ['Editor media library', '剪辑器素材库'];
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const stamp = frames => { const seconds = Math.floor((frames || 0) / 24); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; };
 const FORMATS = 'MP4, MOV, WebM, MKV, M4V, WAV, MP3, FLAC, OGG, M4A, AAC, Opus';
@@ -43,7 +45,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
     function requestAdd(row, kind, plus = false) {
         if (disposed) return;
         if (kind === 'work' || row.state === 'ready') return add(row, kind, plus).catch(actions.error);
-        if (row.state === 'failed') { actions.notify?.(cannotOpen()); return; }
+        if (row.state === 'failed') { actions.notify?.(cannotOpen(), LIBRARY_ISSUE); return; }
         const key = `${kind}:${row.id}`;
         if (!pendingAdds.has(key)) pendingAdds.set(key, {plus, project: actions.projectToken?.()});
         actions.notify?.(preparing());
@@ -56,7 +58,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
             if (row.state === 'ready') {
                 pendingAdds.delete(key);
                 add(row, 'import', pending.plus, {...pending, queued: true}).catch(actions.error);
-            } else if (row.state === 'failed') { pendingAdds.delete(key); actions.notify?.(cannotOpen()); }
+            } else if (row.state === 'failed') { pendingAdds.delete(key); actions.notify?.(cannotOpen(), LIBRARY_ISSUE); }
         }
     }
     function card(row, kind) {
@@ -95,6 +97,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         plus.ondblclick = event => { event.preventDefault(); event.stopPropagation(); };
         plus.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') insert(event); };
         container.append(button, plus);
+        if (kind !== 'work' && row.state === 'failed') container.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: t('Cannot open', '打不开')})));
         return container;
     }
     function updateUsed() {
@@ -120,6 +123,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         updateUsed();
         message.textContent = ''; // Empty states stay silent.
         for (const row of shown) if (row.state === 'failed') message.textContent = t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS;
+        if (message.textContent) message.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: cannotOpen()})));
         if (scroll > 0) {
             const replacement = anchor && [...grid.querySelectorAll('.fv-ed-source')].find(node => node.dataset.key === anchor.dataset.key);
             host.scrollTop = replacement ? scroll + replacement.getBoundingClientRect().top - anchorTop : scroll;
@@ -221,7 +225,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
                     if (place) { placing.push({id: item.id, place}); placeReady(imported); }
                     else startPending([item]);
                 }
-            } catch { actions.notify(cannotOpen()); }
+            } catch { actions.notify(cannotOpen(), LIBRARY_ISSUE); }
             finally { pendingAdds.delete(`import:${id}`); uploading.delete(id); render(); }
         }
     }

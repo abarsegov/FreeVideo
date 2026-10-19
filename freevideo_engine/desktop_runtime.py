@@ -53,7 +53,10 @@ def source_files(root):
              'scripts/bootstrap_linux.sh', 'scripts/windows_app.py', 'scripts/build_windows.py',
              'scripts/check_installation.py', 'scripts/build_launcher_notices.py']
     # Older deployed Windows payloads may predate the optional Mac entry points.
-    files_optional = ('scripts/build_macos.py', 'scripts/macos_app.py')
+    files_optional = ('scripts/build_macos.py', 'scripts/macos_app.py',
+                      'freevideo_source_bootstrap.py', 'freevideo_ed25519.py', 'freevideo_update_keys.py',
+                      'scripts/source_build.py', 'scripts/build_source_delta.py', 'scripts/sign_update_manifest.py',
+                      'scripts/prune_qt_bundle.py', 'scripts/deduplicate_bundle_data.py', 'scripts/pyi_rth_bundle_data.py')
     names += [name for name in files_optional if (root / name).is_file()]
     # Notice and licence files are carried when present; a launcher never fails to start without one.
     names += [name for name in NOTICE_FILES if (root / name).is_file()]
@@ -62,7 +65,7 @@ def source_files(root):
     files += [p for folder in ('freevideo_engine', 'constraints', 'web', 'example_workflows')
               for p in (root / folder).rglob('*')
               if p.is_file() and (p.suffix in ('.py', '.json', '.txt', '.ps1', '.sh', '.js', '.css', '.svg', '.png', '.ico', '.qml',
-                                             '.woff2', '.webp')
+                                             '.woff2', '.otf', '.webp')
                  or folder == 'web' and p.parent.name == 'tutorial' and p.suffix == '.mp4')]
     return sorted(files)
 
@@ -168,6 +171,11 @@ def check_launcher_payload(source, destination):
 
 def materialize_source(bundle=None, destination=None):
     """A one-file executable's temporary extraction must never back an editable install."""
+    if bundle is None:
+        from .top_level_modules import update_modules
+        active = update_modules()[2].ACTIVE
+        if active:
+            return Path(plain(active['source']))
     if bundle is None and not getattr(sys, 'frozen', False):
         return Path(plain(resolved(__file__).parents[1]))
     bundle = io_path(bundle or Path(sys._MEIPASS) / 'engine-source')

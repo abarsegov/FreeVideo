@@ -3,6 +3,7 @@ import { wordmark } from './wordmark.js';
 import { openCompatibility } from './compatibility.js';
 import { animateDetails, closeDialog } from './motion.js';
 import { createGuideReplayEntry } from './first_run_guide.js';
+import { issueButton } from './issue_button.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./setup.css', import.meta.url).href;
@@ -16,6 +17,7 @@ const t = (en, zh) => cn ? zh : en;
 const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好。要重装，请先点“检测并预览”。'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
 const SPEED_TEST_FAILED = 'The speed test did not finish. Click "Test source speeds".';
+const reportable = value => !/The installation plan changed\. Detect configuration again|MODEL_MISMATCH_REPAIR:/.test(String(value || ''));
 const failureText = value => {
     const text = String(value || ''), matches = [...text.matchAll(/MODEL_MISMATCH_REPAIR: ([^\r\n]+)/g)];
     if (!matches.length && text.includes('The installation plan changed. Detect configuration again')) {
@@ -40,6 +42,10 @@ export async function openSetup() {
     dialog.className = "fv-setup";
     const node = (tag, label) => { const e = document.createElement(tag); if (label) e.textContent = label; return e; };
     const note = label => { const e = node("p", label); e.className = "fv-muted"; return e; };
+    const fault = (target, message) => {
+        const text = failureText(message); target.textContent = text;
+        if (text && reportable(message)) target.append(issueButton(t, () => ({where: ['Settings / installation', '设置／安装'], message: text})));
+    };
     const heading = node('header'); heading.className = 'fv-setup-head';
     const dismiss = node('button', '×'); dismiss.type = 'button'; dismiss.className = 'fv-close';
     dismiss.setAttribute('aria-label', t('Close', '关闭')); dismiss.onclick = () => closeDialog(dialog);
@@ -167,7 +173,7 @@ export async function openSetup() {
     let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false, waitSince;
     // A click names what is happening at once, before the server has answered.
     const doing = (en, zh) => { waitSince ??= Date.now(); state.className = ''; state.textContent = t(en, zh); };
-    const fail = error => { waitSince = undefined; installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
+    const fail = error => { waitSince = undefined; installation.open = true; fault(state, error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
     const request = async (action, value) => {
         const response = await api.fetchApi("/freevideo/setup" + (action ? "/" + action : root.value ? '?root='+encodeURIComponent(root.value) : ""), action ? {
             method: "POST", headers: { "Content-Type": "application/json", "X-FreeVideo-Setup": token }, body: JSON.stringify(value || {}),
@@ -205,7 +211,7 @@ export async function openSetup() {
             cancel.scrollIntoView({block: 'center'});
         } catch (error) {
             calibrateStatus.className = 'fv-failure';
-            calibrateStatus.textContent = failureText(error.message);
+            fault(calibrateStatus, error.message);
         } finally { calibrateButton.disabled = false; }
     };
     saveReserve.onclick = async () => {
@@ -221,7 +227,7 @@ export async function openSetup() {
         try {
             showResources(await request('resources', {[reserveField]: reserveAuto.checked ? null : Number(reserve.value)}));
             reserveStatus.textContent = t('Saved · applies to the next request', '已保存 · 下次生成生效');
-        } catch (error) { reserveStatus.className = 'fv-failure'; reserveStatus.textContent = failureText(error.message); }
+        } catch (error) { reserveStatus.className = 'fv-failure'; fault(reserveStatus, error.message); }
         finally { saveReserve.disabled = false; }
     };
     function showDownloads(value) {
@@ -237,6 +243,7 @@ export async function openSetup() {
         sourceStatus.textContent = failureText(value.probe?.error) || (probeBusy ? t('Testing sources… ','正在测速… ') + `${progress?.done || 0}/${progress?.total || '…'}` : '');
         const measured = value.probe?.status === 'complete' ? value.probe : value.preferences?.probe;
         if (measured?.network_unavailable && !probeBusy) sourceStatus.textContent = t('No sources reachable. Check your network or connection mode.', '下载源均无法连接，请检查网络或切换连接模式。');
+        if (value.probe?.error || measured?.network_unavailable && !probeBusy) fault(sourceStatus, sourceStatus.textContent);
         speeds.replaceChildren();
         if (!measured?.sources) return;
         const table = node('table'); table.className = 'fv-speed';
@@ -342,6 +349,7 @@ export async function openSetup() {
         const p = task.progress || {};
         state.className = task.status === "failed" ? "fv-failure" : task.ready && !savedMissing ? "fv-ready" : "";
         state.textContent = failureText(task.error) || (task.ready ? t("Ready to generate.", "准备就绪，可以开始生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
+        if (task.error) fault(state, task.error);
         const phases = task.phase_progress || {}, valid = Number.isFinite(p.total) && p.total > 0 && Number.isFinite(p.done) && p.done >= 0 && p.done <= p.total;
         overall.hidden = !busy;
         overallBar.max = phases.total > 0 ? phases.total : 1; overallBar.value = phases.done || 0;
@@ -381,10 +389,10 @@ export async function openSetup() {
     }
     saveFolders.onclick = async () => {
         invalidate(true); busy = true; controls();
-        const before = [state.textContent, state.className]; doing('Saving model folders…', '正在保存模型目录…');
+        const before = [[...state.childNodes], state.className]; doing('Saving model folders…', '正在保存模型目录…');
         try { await saveModelFolders(); }
-        catch (error) { savedFolders = ''; savedMissing = false; folderStatus.textContent = failureText(error.message); folderStatus.className = 'fv-failure'; }
-        finally { busy = false; waitSince = undefined; [state.textContent, state.className] = before; controls(); }
+        catch (error) { savedFolders = ''; savedMissing = false; fault(folderStatus, error.message); folderStatus.className = 'fv-failure'; }
+        finally { busy = false; waitSince = undefined; state.replaceChildren(...before[0]); state.className = before[1]; controls(); }
     };
     inspect.onclick = async () => {
         invalidate(); busy = true; controls(); doing('Checking installation…', '正在检查安装…');

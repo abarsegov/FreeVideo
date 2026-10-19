@@ -6,6 +6,11 @@ export const SCENE_TEXT = Object.freeze({
     icon: 'M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z',
     label: ['Ready-made', '现成场景'], name: ['Start from a ready-made white-model scene', '用现成的白模场景开始'],
     preparing: ['Preparing the white model…', '正在准备白模…'], failed: ['The white model could not be made: ', '白模没有做成：'],
+    rendering: ['Rendering the white model…', '正在渲染白模…'], retry: ['. Try again.', '。请重试。'],
+    bare: ['The white model could not be made. Try again.', '白模没有做成。请重试。'],
+    noPage: ['The white model could not be made: the renderer is not running in this page. Reload the page and try again.', '白模没有做成：这个页面里的渲染没有运行。请刷新页面后重试。'],
+    notStarted: ['The white model could not be made: rendering did not start within 3 minutes. Try again.', '白模没有做成：三分钟内渲染没有开始。请重试。'],
+    timeout: ['The white model could not be made: rendering did not finish within 3 minutes. Try again.', '白模没有做成：渲染三分钟内没有完成。请重试。'],
 });
 
 export async function sceneList(api) {
@@ -22,17 +27,21 @@ export async function startScene(api, preset, session) {
     return value?.id || null;
 }
 
-// Resolves with the scene's last state: 'ready' (the card follows), 'failed' (with error), or 'timeout'.
-export async function watchScene(api, id, {every = 3000, limit = 180000, stopped = () => false, wait = ms => new Promise(done => setTimeout(done, ms))} = {}) {
+// Resolves with the scene's last state: 'ready' (the card follows), 'failed' (with error), or 'timeout' (with the
+// last state seen: 'waiting' nobody claimed it, 'rendering' it did not finish, page_open false no page was asking).
+// onState hears every state seen, so the page can say what is happening.
+export async function watchScene(api, id, {every = 3000, limit = 180000, stopped = () => false, onState = () => {}, wait = ms => new Promise(done => setTimeout(done, ms))} = {}) {
+    let last = {};
     for (let waited = 0; waited < limit && !stopped(); waited += every) {
         try {
             const response = await agentGet(api, `/freevideo/agent/whitebox/${encodeURIComponent(id)}`);
             if (response.ok) {
                 const value = await response.json();
                 if (value?.status === 'ready' || value?.status === 'failed') return value;
+                last = value || {}; onState(last);
             }
         } catch { /* Asked again on the next turn. */ }
         await wait(every);
     }
-    return {status: 'timeout'};
+    return {status: 'timeout', last: last.status || '', page_open: last.page_open !== false};
 }

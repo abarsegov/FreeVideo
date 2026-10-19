@@ -1841,6 +1841,9 @@ class Jobs:
         else:
             action = 'generate'
             value.update(prompt=spec['prompt'], images=[image_reference(self.port, name) for name in spec['images']])
+            metadata = spec.get('metadata') or {}
+            if metadata.get('cast_card') and metadata.get('cast_part') == 'back':
+                value['cast_view'] = 'back'
         if row.get('_cancel'):
             raise JobError('cancelled', IMAGE_ERRORS['cancelled'])
         row['_image'] = self.port.image_start(action, value)

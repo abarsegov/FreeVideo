@@ -27,9 +27,9 @@ const PLAIN_ERRORS = [
     {key: 'continuation-size', message: 'Use the same aspect ratio as the previous video.',
         title: ['The two videos have different aspect ratios', '两段视频的画面比例不同'],
         summary: ['Choose a video size with the same aspect ratio as the previous video.', '请选择与上一段视频比例相同的画面大小。']},
-    {key: 'continuation-route', message: 'Continue from video cannot be used with these settings. Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".',
+    {key: 'continuation-route', message: 'Continue from video cannot be used with these settings. Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".',
         title: ['This computer can\'t continue a video', '这台电脑无法接续视频'],
-        summary: ['Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡。要生成新视频，请清空“接着生成”。']},
+        summary: ['Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡或 Mac。要生成新视频，请清空“接着生成”。']},
     {key: 'continuation-passes', message: 'Continue from video cannot be used with these settings. Turn on "Two-pass acceleration" and turn off the first-pass preview.',
         title: ['Continuing needs two-pass acceleration', '接续需要二次采样加速'],
         summary: ['Turn on "Two-pass acceleration" and turn off the first-pass preview.', '请打开“二次采样加速”，并关闭先出预览。']},
@@ -484,7 +484,7 @@ export function createErrorPanel(t) {
     const download = document.createElement('button'); download.type = 'button'; download.textContent = t('Export report', '导出报告');
     // A generation that stopped offers two buttons: the report file, or the same facts as a GitHub issue.
     const github = document.createElement('button'); github.type = 'button'; github.className = 'fv-failure-github';
-    github.textContent = t('Submit to GitHub', '提交到 GitHub');
+    github.textContent = t('Report a problem', '提交问题');
     // Shown only for a browser extension, whose steps end with a reload.
     const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'fv-failure-reload';
     reload.textContent = t('Reload page', '刷新页面'); reload.hidden = true; reload.onclick = () => globalThis.location?.reload();
@@ -607,7 +607,7 @@ export function createErrorPanel(t) {
         const lora = advice.kind === 'lora-unusable' || advice.kind === 'lora-int8';
         // An int8 limit is not a judgement, so there is no mistake to report.
         github.hidden = !generated || advice.kind === 'lora-int8'; githubLora = lora;
-        github.textContent = lora ? t('Report a mistake', '报告误判') : t('Submit to GitHub', '提交到 GitHub');
+        github.textContent = lora ? t('Report a mistake', '报告误判') : t('Report a problem', '提交问题');
         if (generated && typeof window !== 'undefined') loadIssueModules();
         if (popup) showFailureDialog(report, t);
         return report;

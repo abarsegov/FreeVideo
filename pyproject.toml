@@ -27,6 +27,9 @@ runtime = [
 [project.scripts]
 freevideo = "freevideo_engine.cli:main"
 
+[tool.setuptools]
+py-modules = ["freevideo_source_bootstrap", "freevideo_ed25519", "freevideo_update_keys"]
+
 [tool.setuptools.packages.find]
 include = ["freevideo_engine*"]
 

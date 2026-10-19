@@ -29,6 +29,7 @@ import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
 import { createCastLibrary } from './cast_library.js';
 import { uploadMedia } from './media_upload.js';
+import { issueButton } from './issue_button.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -47,6 +48,7 @@ style.textContent = `
 .fv-panel[data-freevideo=result]{display:flex;flex-direction:column;justify-content:center}.fv-panel[data-freevideo=result]:has(>.fv-generation-progress:not([hidden])){justify-content:flex-start}.fv-panel .fv-connected-card{text-align:center;padding:28px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-md,12px);color:var(--fv-muted);background:var(--fv-raised)}
 .fv-panel button,.fv-panel select,.fv-panel a{box-sizing:border-box;min-height:var(--fv-h-sm,32px);border:1px solid var(--fv-border);border-radius:var(--fv-r-sm,8px);background:var(--fv-raised);color:var(--fv-ink);padding:5px 10px;font:inherit;font-weight:var(--fv-medium,500);cursor:pointer;text-decoration:none}
 .fv-panel button:hover,.fv-panel a:hover{background:var(--fv-hover)}.fv-panel button:disabled{opacity:.45;cursor:wait}
+.fv-menu-failure{width:min(460px,calc(100vw - 32px));height:auto}.fv-menu-failure::backdrop{background:#0009}
 .fv-panel select{max-width:170px}.fv-note{color:var(--fv-muted);font-size:var(--fv-micro,12px);margin:8px 0;white-space:pre-wrap}.fv-error{color:var(--fv-danger)}
 .fv-mode{font-size:var(--fv-micro,12px);color:var(--fv-accent)}
 .fv-panel[data-freevideo=media]>.fv-mode{display:inline-block;margin:4px 0 2px;padding:2px 8px;border-radius:var(--fv-r-xs,3px);background:var(--fv-selected);font-weight:var(--fv-medium,500)}.fv-card{border:1px solid var(--fv-border);border-radius:var(--fv-r-md,12px);padding:10px;margin-top:10px;background:var(--fv-raised)}
@@ -657,14 +659,24 @@ const launchVisit = isLaunchVisit(globalThis.location?.search, globalThis.sessio
 let userActed = false;
 for (const type of ['pointerdown', 'keydown']) globalThis.addEventListener?.(type, () => { userActed = true; }, {capture: true, once: true});
 
+let menuFailure;
 async function openFromMenu() {
+    menuFailure?.close();
     try {
         const node = (app.graph?._nodes || []).find(isGenerate) || await openFreeVideoWorkflow();
         if (!node) throw new Error('FreeVideo workflow unavailable');
         showStudio(node);
     } catch (error) {
         console.warn('FreeVideo menu:', error);
-        app.extensionManager?.toast?.add({severity: 'error', summary: 'FreeVideo', detail: text('Could not complete. Try again.', '没有完成，请重试'), life: 9000});
+        const message = text('Could not complete. Try again.', '没有完成，请重试');
+        const dialog = el('dialog', undefined, 'fv-panel fv-menu-failure'); menuFailure = dialog;
+        dialog.setAttribute('aria-label', 'FreeVideo');
+        const actions = el('div', undefined, 'fv-row');
+        actions.append(issueButton(text, () => ({where: ['Open FreeVideo', '打开 FreeVideo'], message})),
+            button(text('Close', '关闭'), '', () => dialog.close()));
+        dialog.append(el('p', message), actions);
+        dialog.onclose = () => { dialog.remove(); if (menuFailure === dialog) menuFailure = null; };
+        document.body.append(dialog); dialog.showModal();
     }
 }
 
@@ -819,7 +831,11 @@ app.registerExtension({
                 if (handle) { opening.cover(); await handle.ready; }
                 else {
                     const studio = showStudio(node), status = studio?.querySelector?.('.fv-status');
-                    if (status) { status.dataset.error = 'true'; status.textContent = text('Could not complete. Try again.', '没有完成，请重试'); }
+                    if (status) {
+                        const message = text('Could not complete. Try again.', '没有完成，请重试');
+                        status.dataset.error = 'true'; status.textContent = message;
+                        status.append(issueButton(text, () => ({where: ['Open editor', '打开剪辑'], message})));
+                    }
                 }
             } finally { if (epoch === configuration) opening.finish(); }
         });

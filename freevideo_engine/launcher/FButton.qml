@@ -6,6 +6,7 @@ Button {
     property bool primary: false
     property bool selected: false
     property bool danger: false
+    property bool singleLine: false
     // A text link: accent text, no frame.
     property bool link: false
     implicitHeight: Math.max(theme.height, contentItem.implicitHeight + 14)
@@ -21,7 +22,8 @@ Button {
              : control.link ? (control.hovered ? theme.accentHover : theme.accent)
              : control.flat && !control.hovered ? theme.muted : theme.text
         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-        wrapMode: Text.Wrap
+        wrapMode: control.singleLine ? Text.NoWrap : Text.Wrap
+        elide: control.singleLine ? Text.ElideRight : Text.ElideNone
         Behavior on color { ColorAnimation { duration: 110 } }
     }
     background: Rectangle {

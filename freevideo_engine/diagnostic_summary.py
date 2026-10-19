@@ -202,6 +202,8 @@ def summary_report(report):
         retry = diagnostic.mapping(encoding.get('diagnostic_retry'))
         if type(retry.get('index')) is int and 1 <= retry['index'] <= 3:
             result['encoder_resources']['retry'] = dict(index=retry['index'], final_attempt=retry.get('final_attempt') is True)
+        result['encoder_resources']['workspace'] = diagnostic.encoder_workspace(encoding.get('encoder_workspace'))
+        result['encoder_resources']['resident_models'] = diagnostic.resident_decisions(encoding.get('resident_admission'))
         result['encoder_resources']['oom_attempts'] = []
         for row in diagnostic.sequence(encoding.get('encoder_attempts'))[:3]:
             row = diagnostic.mapping(row)
@@ -220,6 +222,7 @@ def summary_report(report):
     result['worker_resources'] = diagnostic.resources(diagnostic.mapping(report.get('memory')).get('video'))
     result['worker_resources'].update(diagnostic.encoder_discard(engine))
     result['worker_resources'].update(diagnostic.sampling_checkpoint(engine))
+    result['worker_resources']['resident_models'] = diagnostic.resident_decisions(engine.get('resident_admission'))
     if 'failure_cleanup' in engine:
         result['worker_resources']['failure_cleanup'] = diagnostic.failure_cleanup(engine['failure_cleanup'])
     # Keep the driver activity next to the kernel/backend receipt so a

@@ -28,3 +28,5 @@ prune benchmarks
 prune distribution
 prune .github
 exclude AGENTS.md CHANGELOG.md
+
+include freevideo_source_bootstrap.py freevideo_ed25519.py freevideo_update_keys.py

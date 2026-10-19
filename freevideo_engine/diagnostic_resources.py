@@ -342,6 +342,49 @@ def encoder_discard(value):
     return {'encoder_discarded_without_cpu_copy': all(modes)} if modes else {}
 
 
+ROOM_READINGS = ('cuda_free_bytes', 'local_budget_bytes', 'local_usage_bytes', 'process_budget_bytes',
+                 'allocated_bytes', 'reserved_bytes')
+RESIDENT_ACTIONS = ('admit', 'reuse', 'evict', 'park', 'unpark', 'keep_declined')
+RESIDENT_ROLES = ('encoder', 'engine', 'video_vae', 'audio_vae', 'input_video_vae', 'input_audio_vae', 'latent_upscaler')
+RESIDENT_BYTES = ('gpu_bytes', 'estimated_peak_bytes', 'released_gpu_bytes', 'parked_bytes', 'moved_bytes',
+                  'device_ceiling_bytes')
+
+
+def room_readings(value):
+    value = mapping(value)
+    result = numbers(value, ROOM_READINGS)
+    if value.get('bound') in ('cuda_free', 'local_budget', 'process_budget'):
+        result['bound'] = value['bound']
+    return result
+
+
+def encoder_workspace(value):
+    """Text-encode room before and after making space: each reading and the bound that decided."""
+    rows = []
+    for raw in sequence(value)[:6]:
+        raw = mapping(raw)
+        row = numbers(raw, ('whole_need_bytes', 'blocks_need_bytes', 'capacity_bytes', 'need_bytes',
+                            'room_before_bytes', 'room_after_bytes', 'loaded_before_bytes', 'loaded_after_bytes',
+                            'unloaded_bytes'))
+        if raw.get('mode') in ('whole', 'blocks'):
+            row['mode'] = raw['mode']
+        for key in ('readings', 'readings_after'):
+            if isinstance(raw.get(key), dict):
+                row[key] = room_readings(raw[key])
+        rows.append(row)
+    return rows
+
+
+def resident_decisions(value):
+    """Which models were resident, admitted, kept or released around this request."""
+    rows = []
+    for raw in sequence(value)[-24:]:
+        raw = mapping(raw)
+        if raw.get('action') in RESIDENT_ACTIONS and raw.get('role') in RESIDENT_ROLES:
+            rows.append(dict(numbers(raw, RESIDENT_BYTES), action=raw['action'], role=raw['role']))
+    return rows
+
+
 def sampling_checkpoint(value):
     """Keep completion and cleanup evidence without paths or free-form text."""
     value = mapping(value)

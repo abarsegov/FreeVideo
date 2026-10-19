@@ -235,6 +235,10 @@ RULES = [
     'continuing again and again is not recommended. One video has at most 5 parts (the first and 4 '
     'continuations), each continued part at least 10 seconds, about 70 seconds in all; filling that is not '
     'recommended. Past it, cut to a new shot.',
+    'A question is not a request. When the user asks about progress or status ("is it working?", "what happened?") '
+    'answer it in one sentence from what you know or from the job and white-model status, and start nothing; never '
+    'use a question as a prompt. When a row carries "whitebox", the user was starting a white-model scene that is '
+    'still being prepared or failed: say which, and wait for the answer.',
 ]
 
 
@@ -265,6 +269,9 @@ RULES_ZH = [
     '默认切镜头。能切镜头的地方就切：新镜头直接用对应的参考图（人物卡、场景图）生成，不接上一段视频。'
     '只有不能切镜的长镜头、必须连贯的动作、必须连贯的声音，才接着上一段生成，而且不建议一段接一段地连续接。'
     '一条视频最多 5 段（第一段加 4 次接着生成），接着生成的每一段至少 10 秒，总长约 70 秒；不建议接满，超过就切镜头。',
+    '问话不是要求。用户问进度或状态（“在做吗”“怎么了”）时，用一句话照实回答，依据是你所知道的、任务和白模的状态，'
+    '什么都不要开始；不要把问句当提示词。某条 inbox 带有 whitebox 时，说明用户刚启动了白模场景，'
+    '它还在准备或已经失败：照实说是哪一种，再等用户回话。',
 ]
 
 
@@ -480,7 +487,7 @@ def connection_guide(root, base, lang=None, offers=None, resumed=False):
                      '不要停下来问用户——你一停，用户在 FreeVideo 里说的话就没人听了。'
                      '用命令行调接口时，每次等待单独发一条命令（一条命令里不写循环，超时设到 60 秒以上），'
                      '返回后接着发下一条。'
-                     '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
+                     '收到要求（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
                      '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
                      '或者一句用户需要知道的话，发回同一个 session，再接着等。先把话发出去，再调等待接口；不要写成“等待返回后才发话”，那样这句话会晚到将近一分钟。中文用全角标点。'
                      '做完一条视频也不是结尾：这句话就是汇报，不要再在自己窗口里写总结（一写总结这一轮就结束了，'
@@ -498,7 +505,7 @@ def connection_guide(root, base, lang=None, offers=None, resumed=False):
                      'user, because once you stop nobody hears what the user says in FreeVideo. From a command line, '
                      'each wait is its own command (no loop inside one command, timeout above 60 seconds); when it '
                      'returns, run the next one. '
-                     'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
+                     'When a request arrives (text of each inbox row; a question about progress is answered, not started), answer with one sentence before you start, for example '
                      '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
                      'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
                      'user needs to know, to the same session, and wait again. Post your words first and call the wait after; never wait and then post, or they reach the user up to a minute late. Chinese text takes full-width punctuation. '

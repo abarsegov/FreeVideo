@@ -90,6 +90,8 @@ def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None
 
     inbox = Inbox(stream, send)
     runner = None
+    back_detector = None
+    back_detector_loaded = False
     try:
         while not inbox.closed.is_set():
             try:
@@ -124,11 +126,22 @@ def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None
                     if value.get('mask'):
                         region['edit_mask'] = stack.enter_context(Image.open(value['mask']))
                         region['edit_mask'].load()
-                    image = runner.generate(
-                        value['prompt'], width=value['width'], height=value['height'],
-                        seed=value.get('seed'), reference_images=references, **region,
-                        progress=progress,
-                        cancel=inbox.cancel.is_set)
+                    back_check = None
+                    def generate(seed):
+                        return runner.generate(
+                            value['prompt'], width=value['width'], height=value['height'],
+                            seed=seed, reference_images=references, **region,
+                            progress=progress, cancel=inbox.cancel.is_set)
+
+                    if value.get('cast_view') == 'back' and len(references) == 1 and not region:
+                        from .back_view import generate_back, load_detector
+                        if not back_detector_loaded:
+                            back_detector = load_detector(pack_dir)
+                            back_detector_loaded = True
+                        image, back_check = generate_back(generate, value.get('seed'), back_detector,
+                                                         cancel=inbox.cancel.is_set)
+                    else:
+                        image = generate(value.get('seed'))
                     if inbox.cancel.is_set():
                         raise InterruptedError('cancelled')
                     # The parent chooses a fresh path under ComfyUI input.
@@ -136,6 +149,8 @@ def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None
                     with Path(value['path']).open('xb') as target:
                         image.save(target, format='PNG')
                     plan = runner.stats().get('plan')
+                    if back_check is not None:
+                        plan = dict(plan or {}, back_check=back_check)
                 result = dict(phase='result', path=value['path'], seconds=time.monotonic() - started, plan=plan)
             except Exception as error:
                 code = classify_exception(error, stage=context.timing.stage, cancelled=inbox.cancel.is_set())

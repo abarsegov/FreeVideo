@@ -136,7 +136,7 @@ class Engine:
                  weight_decoder='cpu', budget_ceiling_bytes=None, attention_chunk=None, task='t2va', canvas=None,
                  head_chunk=4, window_batch=1, attention_impl='torch', fast_kernels=False,
                  resident_bytes=0, attention_batch_bytes=1 << 29, plan_compute=False, memory_retry=False,
-                 step_cache=None):
+                 step_cache=None, adaln_task=None):
         if step_cache not in (None, 'easycache-av'):
             raise ValueError('MPS supports the easycache-av step cache only')
         self.step_cache = step_cache
@@ -172,6 +172,7 @@ class Engine:
         if task != 't2va' and canvas is None:
             raise ValueError('Native media generation requires its full target canvas')
         self.task, self.canvas = task, dict(canvas) if canvas is not None else None
+        self.adaln_task = schedule_task = adaln_task or task
         from .macos_vdn import activate
         self.overlay = activate()
         import torch
@@ -254,10 +255,10 @@ class Engine:
                     exclude=('transformer_blocks.', 'token_refiner.refiner_blocks.', 'rope.'),
                     decoder=self.weight_decoder)
                 model.rope.to('mps')
-                times = schedule_timesteps(steps, device='mps', task=task)
+                times = schedule_timesteps(steps, device='mps', task=schedule_task)
                 self.cursor = ScheduleCursor(times)
                 tables = TableCache(self.cache, manifest['source_id'], steps, manifest=manifest,
-                    timesteps=times, channels=model.config.hidden_size, device='cpu', task=task)
+                    timesteps=times, channels=model.config.hidden_size, device='cpu', task=schedule_task)
                 embeddings = None
                 delivery_checked = False
                 for index, layer in enumerate(model.token_refiner.refiner_blocks):
@@ -286,7 +287,7 @@ class Engine:
                         load_group(layer.adaln_proj, path(f'adaln/{index:02d}'), self.linears,
                                    prefix=f'transformer_blocks.{index}.adaln_proj.', decoder=self.weight_decoder)
                         if embeddings is None:
-                            _, embeddings = schedule_embeddings(model, steps, device='mps', task=task)
+                            _, embeddings = schedule_embeddings(model, steps, device='mps', task=schedule_task)
                         table = [layer.adaln_proj(value) for value in embeddings]
                         layer.adaln_proj = CachedModulation(table, self.cursor)
                         tables.save(index, layer.adaln_proj, producer_device='mps')
@@ -494,13 +495,17 @@ class Engine:
             return result
 
     def _sample(self, conditioning, seed, *, width, height, frames, progress_offset=0, progress_total=None,
-               initial_latents=None, refine_steps=None, refine_schedule=None):
+               initial_latents=None, refine_steps=None, refine_schedule=None, continuation=None):
         import torch
         from .geometry import geometry, sampler_for_canvas
         from .system import system_memory
         from src.inference.render import generate_latents
         if self.closed:
             raise RuntimeError('MPS engine is closed')
+        if continuation is not None:
+            from .continuation import SIZE_MISMATCH
+            if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
+                raise ValueError(SIZE_MISMATCH)
         shared = getattr(self, '_shared_residency', None)
         previous_residency = shared.stats() if shared is not None else None
         if self.budget_ceiling_bytes is not None:
@@ -529,8 +534,11 @@ class Engine:
         sampler = sampler_for_canvas(generate_latents, width, height)
         progress = MacSamplingProgress(active_steps, len(self.model.transformer_blocks),
                                     offset=progress_offset, total=progress_total)
+        prefix = None
         class StepTimes(list):
             def append(owner, duration):
+                if prefix is not None:
+                    prefix.restore_video()
                 super().append(duration)
                 progress.complete(duration)
         durations = StepTimes()
@@ -543,9 +551,21 @@ class Engine:
         guards = [module.register_forward_pre_hook(host_guard, prepend=True) for module, _, _, _ in self.specs]
         try:
             with torch.no_grad():
-                prompt, tags, conditions = load_conditioning(conditioning, 'mps', task=self.task,
+                prompt, tags, conditions = load_conditioning(conditioning, self.backend.device, task=self.task,
                     canvas=canvas, target=self.canvas)
                 canvas.update(conditioning_tokens(self.task, canvas, conditions))
+                if continuation is not None:
+                    from .continuation import validate_route, encoded_references, UNSUPPORTED_MEDIA, LATENT_FRAMES
+                    anchor = bool(continuation.get('anchor'))
+                    sound = False
+                    if self.task.startswith('ref2va'):
+                        sound = encoded_references(conditions, self.task, anchor)
+                    elif conditions:
+                        raise ValueError(UNSUPPORTED_MEDIA)
+                    validate_route(task=self.task, backend='mps', anchor=anchor, sound=sound,
+                                   media=dict(references=[dict(kind=row['kind']) for row in conditions]) if conditions else None)
+                    canvas['continuation_tokens'] = (LATENT_FRAMES * (width // 32) * (height // 32)
+                                                     + 2 * continuation['audio'].shape[2])
                 self._plan_compute(canvas, prompt.shape[0])
                 previous_block_calls = self._block_metrics()
                 self.cursor.reset(self.steps - refine_steps if refining and refine_schedule is None else 0)
@@ -562,7 +582,11 @@ class Engine:
                 text_residency = self._refine_prompt(prompt)
                 sampling_specs = [row for row in self.specs
                                   if not row[2].startswith('token_refiner.refiner_blocks.')]
-                with self._sampling_weights(sampling_specs, retention) as residency, \
+                from .continuation import sampling
+                with self._sampling_weights(sampling_specs, retention) as residency, sampling(
+                        self.model, continuation, seed, self.backend.device,
+                        video_offset=canvas.get('reference_video_tokens', 0),
+                        audio_offset=canvas.get('reference_audio_tokens', 0)) as prefix, \
                         progress.layers(self.model.transformer_blocks), \
                         frame_preview.observing(latent_frames=canvas['latent_frames'], frame_h=height // 32,
                                                 frame_w=width // 32, step_offset=progress_offset,
@@ -574,12 +598,14 @@ class Engine:
                         begin_pass(self.model, active_steps, self.step_cache)
                     try:
                         video, audio = sampler(self.model, prompt, tags, canvas['frames'], self.steps,
-                                              seed, 'mps', step_seconds=durations,
+                                              seed, self.backend.device, step_seconds=durations,
                                               **(dict(conditions=conditions) if conditions else {}),
                                               **(dict(initial_latents=initial_latents, refine_steps=refine_steps, refine_schedule=refine_schedule)
                                                  if refining else {}))
                     finally:
                         step_cache = end_pass(self.model)
+                    if prefix is not None:
+                        video, audio = prefix.finish(video, audio)
                     self.backend.synchronize()
                     if not bool(video.isfinite().all()) or not bool(audio.isfinite().all()):
                         raise ValueError('MPS sampling produced nonfinite video or audio latents')
@@ -619,7 +645,7 @@ class Engine:
 
     def generate(self, conditioning, seed, *, width, height, frames, two_pass=True, refine_steps=3,
                  upscaler_checkpoint=None, first_pass_saved=None, reuse_weights=False,
-                 refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2):
+                 refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2, continuation=None):
         """Optional cross-pass weight lifetime, isolated to this one request.
 
         Product admission remains separate. Retention obeys each sample's live
@@ -636,7 +662,8 @@ class Engine:
         options = dict(width=width, height=height, frames=frames, two_pass=two_pass,
                        refine_steps=refine_steps, upscaler_checkpoint=upscaler_checkpoint,
                        first_pass_saved=first_pass_saved, phase_changed=phase_changed,
-                       refinement_resident_bytes=refinement_resident_bytes, staged=staged, scale=scale)
+                       refinement_resident_bytes=refinement_resident_bytes, staged=staged, scale=scale,
+                       **(dict(continuation=continuation) if continuation is not None else {}))
         if getattr(self, '_reuse_sampling_weights', False) or getattr(self, '_shared_residency', None) is not None:
             raise RuntimeError('Native sampling weight lifetimes cannot overlap')
         if not reuse_weights:
@@ -654,7 +681,7 @@ class Engine:
 
     def _generate(self, conditioning, seed, *, width, height, frames, two_pass=True, refine_steps=3,
                   upscaler_checkpoint=None, first_pass_saved=None,
-                  refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2):
+                  refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2, continuation=None):
         """Use the shared canvas/schedule, including the original audio clock.
 
         Single-pass behavior remains explicit; memory pressure never disables
@@ -671,8 +698,10 @@ class Engine:
                         base_steps=self.steps, refine_steps=refine_steps, staged=staged, scale=scale)
         if phase_changed is not None:
             phase_changed('first-pass')
+        from .continuation import load
         video, audio, first = self.sample(conditioning, seed, **sampling['first'],
-                                         progress_total=sampling['total_steps'])
+            **(dict(continuation=load(continuation, 'first')) if continuation is not None else {}),
+            progress_total=sampling['total_steps'])
         metrics = dict(sampling_plan=sampling, sampling_passes=[first])
         if not sampling['enabled']:
             return video, audio, metrics
@@ -693,6 +722,7 @@ class Engine:
         result, sound, second = self.sample(conditioning, seed + sampling['restart_seed_offset'],
             **sampling['second'], initial_latents=(lifted, audio), refine_steps=refine_steps,
             refine_schedule=sampling.get('refine_schedule'),
+            **(dict(continuation=load(continuation, 'final')) if continuation is not None else {}),
             progress_offset=self.steps, progress_total=sampling['total_steps'])
         if not torch.equal(sound, audio):
             raise ValueError('MPS refinement changed first-pass audio')

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import * as modules from 'node:module';
+import {resolve} from './editor_test_hooks.mjs';
+if (modules.registerHooks) modules.registerHooks({resolve});
+else modules.register('./editor_test_hooks.mjs', import.meta.url);
 import {uploadMedia} from '../web/media_upload.js';
 import {outputDownloadURL} from '../web/output_download.js';
 import {regenerateResult, upscaleResult, createSecondPassQueue, enableNode} from '../web/studio_queue.js';
@@ -14,7 +18,14 @@ class Element {
         this.classList = {toggle() {}, add() {}};
         this.style = {setProperty(name, value) { this[name] = value; }}; this.offsetHeight = 66;
     }
-    append(...children) { this.children.push(...children); }
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } }
+    after(...children) {
+        if (!this.parentNode) return;
+        const parent = this.parentNode, index = parent.children.indexOf(this);
+        for (const child of children) { child.remove?.(); child.parentNode = parent; }
+        parent.children.splice(index + 1, 0, ...children);
+    }
+    remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); this.parentNode = null; }
     prepend(...children) { this.children.unshift(...children); }
     replaceChildren(...children) { this.children = [...children]; }
     setAttribute(name, value) { this.attributes[name] = value; }
@@ -24,23 +35,27 @@ class Element {
     getClientRects() { return this.unrendered ? [] : [{}]; }
     get childElementCount() { return this.children.length; }
     click() { this.clicked = true; }
+    showModal() { this.open = true; }
+    close() { this.open = false; this.onclose?.(); }
 }
 
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
+    const issueURLs = [];
     let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, doneNotifyStarts = 0, rememberedView = null;
     const openingEvents = [];
     let restoreReleases = 0;
     let launchReady = null;
     const opening = {setName: name => openingEvents.push(['name', name]), cover: () => openingEvents.push(['cover']), finish: () => openingEvents.push(['finish'])};
     const casts = [];
-    let progressView, progressOptions, realProgressFactory;
+    let progressView, progressOptions, realProgressFactory, studioView;
     const app = {
         registerExtension(extension) { extensions.push(extension); },
         graph: {extra: {freevideo_studio: true}, _nodes: [], getNodeById() {}},
     };
     const api = Object.assign(events, {apiURL: value => value});
-    const document = {head: new Element('head'), createElement: tag => new Element(tag),
+    const document = {head: new Element('head'), body: new Element('body'), createElement: tag => new Element(tag),
+        createElementNS: (namespaceURI, tag) => Object.assign(new Element(tag), {namespaceURI}),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
         app, api, uploadMedia, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, enableNode, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue,
@@ -52,7 +67,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         createErrorReport: () => ({}), adviceFor: () => ({advice: {}}),
         errorText: value => String(value),
-        openStudio: node => opened.push(node),
+        openStudio: node => { opened.push(node); return studioView; },
         loraPanel: () => () => {}, loraWarning: () => 'LoRA warning', promptGuide: () => new Element('guide'),
         createGenerationProgress: (_t, _now, options) => {
             if (realProgressFactory) {
@@ -85,7 +100,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     };
     const previous = new Map();
     for (const [name, value] of Object.entries({
-        document, navigator: {language: 'en'}, window: events, addEventListener: (type, fn, options) => events.addEventListener(type, fn, options),
+        document, navigator: {language: 'en'}, window: events, open: url => issueURLs.push(new URL(url)), addEventListener: (type, fn, options) => events.addEventListener(type, fn, options),
         getComputedStyle: element => ({marginTop: '8px', marginBottom: '8px', display: element.hidden ? 'none' : 'block', ...element.style}),
         CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options?.detail; } },
         requestAnimationFrame: callback => callback(), __freevideoEntryTest: dependencies,
@@ -97,6 +112,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         let source = await readFile(new URL('../web/freevideo.js', import.meta.url), 'utf8');
         source = source.replace("import { beginWorkspaceRestore, finishWorkspaceRestore, waitForLauncherRestore } from './workspace_restore.js';", 'const {beginWorkspaceRestore,finishWorkspaceRestore,waitForLauncherRestore} = globalThis.__freevideoEntryTest;');
         source = source.replace("import { openEditorView } from './editor_loader.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
+        source = source.replace("from './issue_button.js'", `from '${new URL('../web/issue_button.js', import.meta.url).href}'`);
         source = source
             .replace("import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';", 'const {createErrorPanel,errorText,createErrorReport,adviceFor} = globalThis.__freevideoEntryTest;')
             .replace('import { app } from "../../scripts/app.js";', 'const {app} = globalThis.__freevideoEntryTest;')
@@ -258,6 +274,18 @@ test('main browser entry registers both views and preserves node hooks', async t
         app.graph._nodes = nodes;
         await entry.function();
         assert.equal(workflows, 1); assert.equal(opened.length, before + 2);
+        app.graph._nodes = [];
+        dependencies.openFreeVideoWorkflow = async () => { throw new Error('workflow fixture unavailable'); };
+        const warn = console.warn; console.warn = () => {};
+        try { await entry.function(); } finally { console.warn = warn; }
+        const menuFailure = document.body.children.find(child => child.className?.includes('fv-menu-failure'));
+        assert.ok(menuFailure.open);
+        const menuIssue = menuFailure.children[1].children[0];
+        assert.ok(menuIssue.className.includes('fv-issue-button')); assert.notEqual(menuIssue.hidden, true);
+        await menuIssue.onclick();
+        assert.match(issueURLs.at(-1).searchParams.get('feedback'), /Error: Could not complete\. Try again\./);
+        app.graph._nodes = nodes; await entry.function();
+        assert.equal(document.body.children.includes(menuFailure), false, 'successful opening clears the failure and its report button');
         rememberedView = 'editor';
         const restored = [];
         let finishLaunch, finishEditor;
@@ -304,10 +332,19 @@ test('main browser entry registers both views and preserves node hooks', async t
             app.graph._nodes = nodes;
         });
         // The lazy loader owns failed imports: it notifies, reports through onFailure and resolves null.
+        const studioStatus = new Element('div'); studioView = {querySelector: () => studioStatus};
         dependencies.openEditorView = async (node, options) => { options.onFailure(new Error('editor unavailable')); return null; };
-        extension.afterConfigureGraph(); await Promise.resolve();
+        extension.afterConfigureGraph(); for (let i = 0; i < 10; i++) await Promise.resolve();
         assert.ok(window.__freevideoHealth.some(row => row.where === 'editor'));
         assert.equal(opened.at(-1), node, 'editor failure leaves the restored studio available');
+        const editorIssue = studioStatus.children.find(child => child.className?.includes('fv-issue-button'));
+        assert.ok(editorIssue); assert.notEqual(editorIssue.hidden, true);
+        await editorIssue.onclick();
+        assert.match(issueURLs.at(-1).searchParams.get('feedback'), /Where: Open editor\nError: Could not complete\. Try again\./);
+        studioStatus.replaceChildren(); dependencies.openEditorView = async () => ({ready: Promise.resolve()});
+        extension.afterConfigureGraph(); for (let i = 0; i < 10; i++) await Promise.resolve();
+        assert.equal(studioStatus.children.length, 0, 'successful editor opening adds no issue button');
+        studioView = null;
         rememberedView = 'nodes';
         const count = opened.length; extension.afterConfigureGraph();
         assert.equal(opened.length, count, 'remembered Nodes does not open either dialog');

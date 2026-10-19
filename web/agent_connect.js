@@ -1,3 +1,4 @@
+import {issueButton} from './issue_button.js';
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 // The one place a page says whether an agent is connected: its name while it is, never a client id.
@@ -41,6 +42,7 @@ export function agentConnectCard(t, api, shown = () => true) {
     const actions = el('div', 'fv-agent-connect-actions');
     const button = el('button', 'fv-primary'); button.type = 'button'; button.disabled = true;
     const label = el('span'); button.append(icon('copy'), label);
+    let issue = null;
     const arrow = el('span', 'fv-agent-connect-arrow', '→'); arrow.setAttribute('aria-hidden', 'true');
     actions.append(button, arrow, el('span', 'fv-agent-connect-hint', t('Paste to your agent', '粘贴给 Agent')));
     const sentence = el('p', 'fv-agent-sentence'); sentence.hidden = true;
@@ -52,6 +54,9 @@ export function agentConnectCard(t, api, shown = () => true) {
     const active = () => body.isConnected && shown();
     const render = () => {
         label.textContent = !text && failures >= 3 ? t('Could not get address. Retry', '获取失败，重试') : feedback ? t('Copied', '已复制') : t('Copy', '复制');
+        if (!text && failures >= 3) {
+            if (!issue) { issue = issueButton(t, () => ({where: ['Agent connection', 'Agent 连接'], message: label.textContent})); button.after(issue); }
+        } else if (issue) { issue.remove(); issue = null; }
         button.disabled = !text && failures < 3;
         button.title = !text && failures < 3 ? t('Getting the connection address…', '正在获取连接地址…') : '';
         status.hidden = !!text; status.textContent = !text && failures < 3 ? t('Getting the connection address…', '正在获取连接地址…') : '';

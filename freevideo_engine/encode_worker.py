@@ -514,7 +514,7 @@ def _encode(args, request, resident, trace):
         guard.arm()
         from .encoder_memory import snapshot
         phase('encoder_compute', load_seconds=load_seconds, device_load_seconds=transfer_seconds[0],
-              gpu=snapshot(torch, clip, memory))
+              gpu=snapshot(torch, clip, memory, windows_memory=True))
         print(json.dumps({'event': 'encoder_compute_start'}), flush=True)
         if not encoder_cache_hit:
             start_layer_window(trace, clip, path)
@@ -580,7 +580,7 @@ def _encode(args, request, resident, trace):
         torch.cuda.synchronize()
         from .encoder_memory import release_cast_buffers, snapshot
         loading['cast_buffers'] = release_cast_buffers(memory, torch)
-        phase('encoder_conditioning_pack', gpu=snapshot(torch, clip, memory))
+        phase('encoder_conditioning_pack', gpu=snapshot(torch, clip, memory, windows_memory=True))
     finally:
         del clip.load_model
         stop_layer_window(trace)

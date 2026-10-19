@@ -2,6 +2,7 @@ import { api } from '../../scripts/api.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { canExtend, extendText, extendSourceExists } from './studio_extend.js';
+import { issueButton } from './issue_button.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./result_actions.css', import.meta.url).href; document.head.append(css);
@@ -62,16 +63,20 @@ function popover(menu, summary, onClose = () => {}) {
 export function secondPassAction(t, run) {
     const button = action('button', t('Run second pass', '继续二采'), 'expand', 'fv-action-primary fv-action-second-pass');
     const label = button.lastElementChild;
+    let problem;
     button.title = t('Continue from this preview to the full-resolution video.',
         '从这个预览继续生成全分辨率视频。');
     button.onclick = async () => {
         if (button.disabled) return;
+        problem?.remove();
         button.disabled = true; button.setAttribute('aria-busy', 'true');
         label.textContent = button.title = t('Adding…', '正在添加…');
         try { await run(); label.textContent = button.title = t('Queued', '已加入队列'); }
         catch {
             button.disabled = false;
             label.textContent = button.title = t('Second pass did not start · Retry', '二采没有开始 · 重试');
+            problem = issueButton(t, () => ({where: ['Second pass', '二采'], message: label.textContent}));
+            button.after(problem);
         } finally { button.removeAttribute('aria-busy'); }
     };
     return button;
@@ -89,20 +94,28 @@ function deleteAction(t, remove) {
     hint.textContent = t('The video and its files will be deleted.',
         '视频和相关文件都会删除。');
     const problem = document.createElement('small'); problem.className = 'fv-confirm-problem'; problem.hidden = true;
+    let problemIssue;
     const row = document.createElement('div'); row.className = 'fv-confirm-actions';
     const cancel = action('button', t('Cancel', '取消'), null, 'fv-action-secondary');
     const confirm = action('button', t('Delete', '删除'), 'trash', 'fv-action-danger');
     cancel.onclick = () => { menu.open = false; summary.focus(); };
     confirm.onclick = async () => {
+        problem.hidden = true; problemIssue?.remove();
         confirm.disabled = cancel.disabled = true; confirm.lastElementChild.textContent = t('Deleting…', '正在删除…');
         try { await remove(); menu.open = false; }
-        catch (error) { problem.textContent = error.message; problem.hidden = false; }
+        catch (error) {
+            problem.textContent = error.message; problem.hidden = false;
+            if (error.reportable !== false) {
+                problemIssue = issueButton(t, () => ({where: ['Delete creation', '删除作品'], message: problem.textContent}));
+                problem.after(problemIssue);
+            }
+        }
         finally { confirm.disabled = cancel.disabled = false; confirm.lastElementChild.textContent = t('Delete', '删除'); }
     };
     row.append(cancel, confirm);
     panel.append(title, hint, problem, row);
     menu.append(summary, panel);
-    popover(menu, summary, () => { problem.hidden = true; });
+    popover(menu, summary, () => { problem.hidden = true; problemIssue?.remove(); });
     menu.addEventListener('toggle', () => { if (menu.open) cancel.focus(); });
     return menu;
 }
@@ -133,13 +146,21 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
     if (extend && canExtend(record)) {
         const button = action('button', extendText(t, 'action'), 'extend', 'fv-action-secondary fv-action-extend');
         const label = button.lastElementChild;
+        let problem;
+        const fault = () => {
+            problem?.remove();
+            problem = issueButton(t, () => ({where: ['Continue video', '延长视频'], message: label.textContent}));
+            button.after(problem);
+        };
         const available = exists => {
             label.textContent = exists ? extendText(t, 'action') : t('Video unavailable · retry', '视频不可用 · 重试');
             button.title = '';
+            if (exists) problem?.remove(); else fault();
         };
         extendSourceExists(api, record).then(available);
         button.onclick = async () => {
             if (button.disabled) return;
+            problem?.remove();
             button.disabled = true;
             button.title = t('Checking video…', '正在检查视频…');
             try {
@@ -149,6 +170,7 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
             } catch (error) {
                 label.textContent = error.message || t('Could not open the editor. Try again.', '无法打开剪辑，请重试。');
                 button.title = label.textContent;
+                fault();
             } finally { button.disabled = false; }
         };
         bar.append(button);
@@ -163,11 +185,17 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
         const report = action('button', reportLabel, 'report', 'fv-action-secondary fv-action-report');
         report.title = t('Diagnostic report: hardware, settings and timings', '诊断报告：硬件、设置和耗时');
         const text = report.lastElementChild;
+        let problem;
         report.onclick = async () => {
             if (report.disabled) return;
+            problem?.remove();
             report.disabled = true; text.textContent = t('Preparing…', '正在整理…');
             try { await diagnostic(); text.textContent = reportLabel; }
-            catch { text.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试'); }
+            catch {
+                text.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
+                problem = issueButton(t, () => ({where: ['Diagnostic report', '诊断报告'], message: text.textContent}));
+                report.after(problem);
+            }
             finally { report.disabled = false; }
         };
         bar.append(report);

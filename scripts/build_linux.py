@@ -224,7 +224,14 @@ def main():
         '--exclude-module', 'torch', '--exclude-module', 'triton', '--exclude-module', 'numpy',
         '--exclude-module', 'transformers', '--exclude-module', 'tkinter',
         str(ROOT / 'scripts/linux_app.py')]
-    subprocess.run(command, cwd=ROOT, check=True)
+    from scripts.source_build import run_pyinstaller
+    # These files are added after PyInstaller; they belong to the same base key.
+    extra_runtime = {'appimage-runtime': str(runtime), 'appimagetool': str(appimagetool)}
+    for name in SYSTEM_LIBRARIES:
+        path = system_library(name, args.libraries.resolve() if args.libraries else None)
+        if path is not None:
+            extra_runtime[name] = str(path.resolve())
+    run_pyinstaller(command, ROOT, staged, build_file, extra_runtime)
     dist = out / 'dist' / 'FreeVideo'
     write_prune_report(out, prune_qt_bundle(dist))
     bundled = bundle_libraries(dist / '_internal', args.libraries.resolve() if args.libraries else None)

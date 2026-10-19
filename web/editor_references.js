@@ -89,7 +89,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
                 const result = await source.upload(file);
                 write([...source.rows(), {file: result.file, role: 'reference', enabled: true}]);
             }
-            if (skipped && !disposed) notify(t('Could not read this picture. Please choose another one.', '无法读取这张图片，请换一张。'));
+            if (skipped && !disposed) notify(t('Could not read this picture. Please choose another one.', '无法读取这张图片，请换一张。'), ['Editor reference images', '剪辑器参考图']);
         } catch (value) { error(value); }
         finally { working = false; picker.value = ''; update(); }
     }

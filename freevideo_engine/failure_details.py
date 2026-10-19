@@ -460,7 +460,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
           '请使用 39、56、73、90 等每次增加 17 的帧数；接续时，这个数包含开头重复的 22 帧。')),
         (r'Continue from video cannot be used with these settings\. Continuing a video needs an NVIDIA', 'continuation-route',
          ("This computer can't continue a video", '这台电脑无法接续视频'),
-         ('Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡。要生成新视频，请清空“接着生成”。')),
+         ('Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡或 Mac。要生成新视频，请清空“接着生成”。')),
         (r'Continue from video cannot be used with these settings\. Turn on "Two-pass', 'continuation-passes',
          ('Continuing needs two-pass acceleration', '接续需要二次采样加速'),
          ('Turn on "Two-pass acceleration" and turn off the first-pass preview.', '请打开“二次采样加速”，并关闭先出预览。')),
