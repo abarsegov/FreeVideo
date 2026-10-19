@@ -32,10 +32,22 @@ export async function agentPost(api, path, body) {
 }
 
 export async function agentSend(api, method, path, body, headers = {}) {
+    return sendWithPageSession(api, method, path, body === undefined ? undefined : JSON.stringify(body),
+        {'Content-Type': 'application/json', ...headers});
+}
+
+// Rendering can outlive a page session. Binary uploads need the same narrow
+// refresh/retry as JSON controls, without serializing the Blob as JSON.
+export async function agentUpload(api, path, blob) {
+    return sendWithPageSession(api, 'POST', path, blob,
+        {'Content-Type': blob.type || 'video/mp4'});
+}
+
+async function sendWithPageSession(api, method, path, body, headers) {
     for (let attempt = 0; ; attempt++) {
         const response = await api.fetchApi(path, {method, credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json', ...headers, ...await agentHeaders(api)},
-            ...(body === undefined ? {} : {body: JSON.stringify(body)})});
+            headers: {...headers, ...await agentHeaders(api)},
+            ...(body === undefined ? {} : {body})});
         if (response.status !== 403 || attempt) return response;
         const value = await response.clone().json().catch(() => null);
         if (value?.error?.code !== 'page_session_required') return response;
